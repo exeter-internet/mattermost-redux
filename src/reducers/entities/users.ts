@@ -5,10 +5,11 @@ import {combineReducers} from 'redux';
 import {UserTypes, ChannelTypes} from 'action_types';
 import {profileListToMap} from 'utils/user_utils';
 import {GenericAction} from 'types/actions';
-import {UserProfile, UserStatus} from 'types/users';
-import {RelationOneToMany, IDMappedObjects, RelationOneToOne} from 'types/utilities';
+import {UserAccessToken, UserProfile, UserStatus} from 'types/users';
+import {RelationOneToMany, IDMappedObjects, RelationOneToOne, Dictionary} from 'types/utilities';
 import {Team} from 'types/teams';
 import {Channel} from 'types/channels';
+import {Group} from 'types/groups';
 
 function profilesToSet(state: RelationOneToMany<Team, UserProfile>, action: GenericAction) {
     const id = action.id;
@@ -407,6 +408,16 @@ function profilesNotInChannel(state: RelationOneToMany<Channel, UserProfile> = {
     }
 }
 
+function profilesInGroup(state: RelationOneToMany<Group, UserProfile> = {}, action: GenericAction) {
+    switch (action.type) {
+    case UserTypes.RECEIVED_PROFILES_LIST_IN_GROUP: {
+        return profileListToSet(state, action);
+    }
+    default:
+        return state;
+    }
+}
+
 function statuses(state: RelationOneToOne<UserProfile, string> = {}, action: GenericAction) {
     switch (action.type) {
     case UserTypes.RECEIVED_STATUS: {
@@ -498,7 +509,7 @@ function isManualStatus(state: RelationOneToOne<UserProfile, boolean> = {}, acti
     }
 }
 
-function myUserAccessTokens(state: any = {}, action: GenericAction) {
+function myUserAccessTokens(state: Dictionary<UserAccessToken> = {}, action: GenericAction) {
     switch (action.type) {
     case UserTypes.RECEIVED_MY_USER_ACCESS_TOKEN: {
         const nextState = {...state};
@@ -563,6 +574,20 @@ function stats(state = {}, action: GenericAction) {
     }
 }
 
+function filteredStats(state = {}, action: GenericAction) {
+    switch (action.type) {
+    case UserTypes.RECEIVED_FILTERED_USER_STATS: {
+        const stat = action.data;
+        return {
+            ...state,
+            ...stat,
+        };
+    }
+    default:
+        return state;
+    }
+}
+
 export default combineReducers({
 
     // the current selected user
@@ -595,6 +620,9 @@ export default combineReducers({
     // object where every key is a channel id and has a Set with the users id that are not members of the channel
     profilesNotInChannel,
 
+    // object where every key is a group id and has a Set with the users id that are members of the group
+    profilesInGroup,
+
     // object where every key is the user id and has a value with the current status of each user
     statuses,
 
@@ -603,4 +631,7 @@ export default combineReducers({
 
     // Total user stats
     stats,
+
+    // Total user stats after filters have been applied
+    filteredStats,
 });

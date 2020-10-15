@@ -41,7 +41,7 @@ export function getPing(): ActionFunc {
 }
 
 export function resetPing(): ActionFunc {
-    return async (dispatch: DispatchFunc, getState: GetStateFunc) => {
+    return async (dispatch: DispatchFunc) => {
         dispatch({type: GeneralTypes.PING_RESET, data: {}});
 
         return {data: true};
@@ -115,7 +115,7 @@ export function logClientError(message: string, level: logLevel = 'ERROR') {
 }
 
 export function setAppState(state: GeneralState['appState']): ActionFunc {
-    return async (dispatch: DispatchFunc, getState: GetStateFunc) => {
+    return async (dispatch: DispatchFunc) => {
         dispatch({type: GeneralTypes.RECEIVED_APP_STATE, data: state});
 
         return {data: true};
@@ -123,7 +123,7 @@ export function setAppState(state: GeneralState['appState']): ActionFunc {
 }
 
 export function setDeviceToken(token: GeneralState['deviceToken']): ActionFunc {
-    return async (dispatch: DispatchFunc, getState: GetStateFunc) => {
+    return async (dispatch: DispatchFunc) => {
         dispatch({type: GeneralTypes.RECEIVED_APP_DEVICE_TOKEN, data: token});
 
         return {data: true};
@@ -131,7 +131,7 @@ export function setDeviceToken(token: GeneralState['deviceToken']): ActionFunc {
 }
 
 export function setServerVersion(serverVersion: string): ActionFunc {
-    return async (dispatch, getState: GetStateFunc) => {
+    return async (dispatch) => {
         dispatch({type: GeneralTypes.RECEIVED_SERVER_VERSION, data: serverVersion});
         dispatch(loadRolesIfNeeded([]));
 
@@ -185,6 +185,21 @@ export function getRedirectLocation(url: string): ActionFunc {
     };
 }
 
+export function getWarnMetricsStatus(): ActionFunc {
+    return async (dispatch: DispatchFunc, getState: GetStateFunc) => {
+        let data;
+        try {
+            data = await Client4.getWarnMetricsStatus();
+        } catch (error) {
+            forceLogoutIfNecessary(error, dispatch, getState);
+            return {error};
+        }
+        dispatch({type: GeneralTypes.WARN_METRICS_STATUS_RECEIVED, data});
+
+        return {data};
+    };
+}
+
 export default {
     getPing,
     getClientConfig,
@@ -198,4 +213,5 @@ export default {
     setStoreFromLocalData,
     setUrl,
     getRedirectLocation,
+    getWarnMetricsStatus,
 };

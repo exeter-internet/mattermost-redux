@@ -615,6 +615,54 @@ describe('Actions.Admin', () => {
         }
     });
 
+    it('uploadPublicLdapCertificate', async () => {
+        const testFileData = fs.createReadStream('test/assets/images/test.png');
+
+        nock(Client4.getBaseRoute()).
+            post('/ldap/certificate/public').
+            reply(200, OK_RESPONSE);
+
+        const request = await Actions.uploadPublicLdapCertificate(testFileData)(store.dispatch, store.getState);
+        if (request.status === RequestStatus.FAILURE) {
+            throw new Error('uploadPublicLdapCertificate request failed err=' + request.error);
+        }
+    });
+
+    it('uploadPrivateLdapCertificate', async () => {
+        const testFileData = fs.createReadStream('test/assets/images/test.png');
+
+        nock(Client4.getBaseRoute()).
+            post('/ldap/certificate/private').
+            reply(200, OK_RESPONSE);
+
+        const request = await Actions.uploadPrivateLdapCertificate(testFileData)(store.dispatch, store.getState);
+        if (request.status === RequestStatus.FAILURE) {
+            throw new Error('uploadPrivateLdapCertificate request failed err=' + request.error);
+        }
+    });
+
+    it('removePublicLdapCertificate', async () => {
+        nock(Client4.getBaseRoute()).
+            delete('/ldap/certificate/public').
+            reply(200, OK_RESPONSE);
+
+        const request = await Actions.removePublicLdapCertificate()(store.dispatch, store.getState);
+        if (request.status === RequestStatus.FAILURE) {
+            throw new Error('removePublicLdapCertificate request failed err=' + request.error);
+        }
+    });
+
+    it('removePrivateLdapCertificate', async () => {
+        nock(Client4.getBaseRoute()).
+            delete('/ldap/certificate/private').
+            reply(200, OK_RESPONSE);
+
+        const request = await Actions.removePrivateLdapCertificate()(store.dispatch, store.getState);
+        if (request.status === RequestStatus.FAILURE) {
+            throw new Error('removePrivateLdapCertificate request failed err=' + request.error);
+        }
+    });
+
     it('testElasticsearch', async () => {
         nock(Client4.getBaseRoute()).
             post('/elasticsearch/test').
@@ -678,7 +726,7 @@ describe('Actions.Admin', () => {
             get('/analytics/old').
             query(true).
             times(2).
-            reply(200, [{name: 'channel_open_count', value: 495}, {name: 'channel_private_count', value: 19}, {name: 'post_count', value: 2763}, {name: 'unique_user_count', value: 316}, {name: 'team_count', value: 159}, {name: 'total_websocket_connections', value: 1}, {name: 'total_master_db_connections', value: 8}, {name: 'total_read_db_connections', value: 0}, {name: 'daily_active_users', value: 22}, {name: 'monthly_active_users', value: 114}]);
+            reply(200, [{name: 'channel_open_count', value: 495}, {name: 'channel_private_count', value: 19}, {name: 'post_count', value: 2763}, {name: 'unique_user_count', value: 316}, {name: 'team_count', value: 159}, {name: 'total_websocket_connections', value: 1}, {name: 'total_master_db_connections', value: 8}, {name: 'total_read_db_connections', value: 0}, {name: 'daily_active_users', value: 22}, {name: 'monthly_active_users', value: 114}, {name: 'registered_users', value: 500}]);
 
         await Actions.getStandardAnalytics()(store.dispatch, store.getState);
         await Actions.getStandardAnalytics(TestHelper.basicTeam.id)(store.dispatch, store.getState);
@@ -1177,8 +1225,8 @@ describe('Actions.Admin', () => {
         const state = store.getState();
         const groups = state.entities.admin.ldapGroups;
         assert.ok(groups[key]);
-        assert.ok(groups[key].mattermost_group_id === null);
-        assert.ok(groups[key].has_syncables === null);
+        assert.ok(groups[key].mattermost_group_id === undefined);
+        assert.ok(groups[key].has_syncables === undefined);
     });
 
     it('getSamlMetadataFromIdp', async () => {
@@ -1207,6 +1255,17 @@ describe('Actions.Admin', () => {
 
         await Actions.setSamlIdpCertificateFromMetadata(samlIdpPublicCertificateText)(store.dispatch, store.getState);
 
-        const state = store.getState();
+        // This test doesn't appear to actually check anything?
+    });
+
+    it('sendWarnMetricAck', async () => {
+        const warnMetricAck = {
+            id: 'metric1',
+        };
+        nock(Client4.getBaseRoute()).
+            post('/warn_metrics/ack').
+            reply(200, OK_RESPONSE);
+
+        await Actions.sendWarnMetricAck(warnMetricAck.id, false)(store.dispatch, store.getState);
     });
 });

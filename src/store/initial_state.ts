@@ -14,6 +14,7 @@ const state: GlobalState = {
             license: {},
             serverVersion: '',
             timezones: [],
+            warnMetricsStatus: {},
         },
         users: {
             currentUserId: '',
@@ -26,8 +27,10 @@ const state: GlobalState = {
             profilesWithoutTeam: new Set(),
             profilesInChannel: {},
             profilesNotInChannel: {},
+            profilesInGroup: {},
             statuses: {},
             stats: {},
+            myUserAccessTokens: {},
         },
         teams: {
             currentTeamId: '',
@@ -49,6 +52,7 @@ const state: GlobalState = {
             totalCount: 0,
             manuallyUnread: {},
             channelModerations: {},
+            channelMemberCountsByGroup: {},
         },
         posts: {
             expandedURLs: {},
@@ -83,8 +87,9 @@ const state: GlobalState = {
             complianceReports: {},
             ldapGroups: {},
             ldapGroupsCount: 0,
-            userAccessTokens: [],
-            clusterInfo: {},
+            userAccessTokens: {},
+            clusterInfo: [],
+            analytics: {},
         },
         jobs: {
             jobs: {},
@@ -143,12 +148,14 @@ const state: GlobalState = {
         groups: {
             groups: {},
             syncables: {},
-            members: {},
+            myGroups: {},
+            stats: {},
         },
         channelCategories: {
             byId: {},
             orderByTeam: {},
         },
+        cloud: {},
     },
     errors: [],
     requests: {

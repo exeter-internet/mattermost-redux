@@ -3,13 +3,17 @@
 
 import assert from 'assert';
 
-import {Preferences} from '../constants';
+import {Preferences, General} from '../constants';
 import {
     displayUsername,
     filterProfilesMatchingTerm,
     getSuggestionsSplitBy,
     getSuggestionsSplitByMultiple,
+    includesAnAdminRole,
+    applyRolesFilters,
 } from 'utils/user_utils';
+
+import TestHelper from 'test/test_helper';
 
 describe('user utils', () => {
     describe('displayUsername', () => {
@@ -20,19 +24,7 @@ describe('user utils', () => {
             first_name: 'test',
             last_name: 'user',
         };
-        const testUser1 = {
-            id: 'test_user_id',
-            username: 'username',
-            first_name: 'First',
-            last_name: 'Last',
-        };
-        const testUser2 = {
-            id: 'test_user_id_2',
-            username: 'username2',
-            first_name: 'First2',
-            last_name: 'Last2',
-            nickname: 'nick2',
-        };
+
         it('should return username', () => {
             assert.equal(displayUsername(userObj, 'UNKNOWN_PREFERENCE'), 'testUser');
         });
@@ -171,6 +163,65 @@ describe('user utils', () => {
             const expectedSuggestions = ['one.two-three', '.two-three', 'two-three', '-three', 'three'];
 
             expect(getSuggestionsSplitByMultiple(term, ['.', '-'])).toEqual(expectedSuggestions);
+        });
+    });
+
+    describe('Utils.applyRolesFilters', () => {
+        const team = TestHelper.fakeTeamWithId();
+        const adminUser = {...TestHelper.fakeUserWithId(), roles: `${General.SYSTEM_USER_ROLE} ${General.SYSTEM_ADMIN_ROLE}`};
+        const nonAdminUser = {...TestHelper.fakeUserWithId(), roles: `${General.SYSTEM_USER_ROLE}`};
+        const guestUser = {...TestHelper.fakeUserWithId(), roles: `${General.SYSTEM_GUEST_ROLE}`};
+
+        it('Non admin user with non admin membership', () => {
+            const nonAdminMembership = {...TestHelper.fakeTeamMember(nonAdminUser.id, team.id), scheme_admin: false, scheme_user: true};
+            assert.equal(applyRolesFilters(nonAdminUser, [General.SYSTEM_USER_ROLE], nonAdminMembership), true);
+            assert.equal(applyRolesFilters(nonAdminUser, [General.TEAM_USER_ROLE], nonAdminMembership), true);
+            assert.equal(applyRolesFilters(nonAdminUser, [General.CHANNEL_USER_ROLE], nonAdminMembership), true);
+            assert.equal(applyRolesFilters(nonAdminUser, [General.SYSTEM_ADMIN_ROLE, General.TEAM_ADMIN_ROLE, General.CHANNEL_ADMIN_ROLE], nonAdminMembership), false);
+        });
+
+        it('Non admin user with admin membership', () => {
+            const adminMembership = {...TestHelper.fakeTeamMember(nonAdminUser.id, team.id), scheme_admin: true, scheme_user: true};
+            assert.equal(applyRolesFilters(nonAdminUser, [General.SYSTEM_USER_ROLE], adminMembership), true);
+            assert.equal(applyRolesFilters(nonAdminUser, [General.TEAM_ADMIN_ROLE], adminMembership), true);
+            assert.equal(applyRolesFilters(nonAdminUser, [General.CHANNEL_ADMIN_ROLE], adminMembership), true);
+            assert.equal(applyRolesFilters(nonAdminUser, [General.SYSTEM_ADMIN_ROLE, General.TEAM_USER_ROLE, General.CHANNEL_USER_ROLE], adminMembership), false);
+        });
+
+        it('Admin user with any membership', () => {
+            const nonAdminMembership = {...TestHelper.fakeTeamMember(adminUser.id, team.id), scheme_admin: false, scheme_user: true};
+            const adminMembership = {...TestHelper.fakeTeamMember(adminUser.id, team.id), scheme_admin: true, scheme_user: true};
+            assert.equal(applyRolesFilters(adminUser, [General.SYSTEM_ADMIN_ROLE], nonAdminMembership), true);
+            assert.equal(applyRolesFilters(adminUser, [General.SYSTEM_USER_ROLE, General.TEAM_USER_ROLE, General.TEAM_ADMIN_ROLE, General.CHANNEL_USER_ROLE, General.CHANNEL_ADMIN_ROLE], nonAdminMembership), false);
+            assert.equal(applyRolesFilters(adminUser, [General.SYSTEM_ADMIN_ROLE], adminMembership), true);
+            assert.equal(applyRolesFilters(adminUser, [General.SYSTEM_USER_ROLE, General.TEAM_USER_ROLE, General.TEAM_ADMIN_ROLE, General.CHANNEL_USER_ROLE, General.CHANNEL_ADMIN_ROLE], adminMembership), false);
+        });
+
+        it('Guest user with any membership', () => {
+            const nonAdminMembership = {...TestHelper.fakeTeamMember(guestUser.id, team.id), scheme_admin: false, scheme_user: true};
+            const adminMembership = {...TestHelper.fakeTeamMember(guestUser.id, team.id), scheme_admin: true, scheme_user: true};
+            assert.equal(applyRolesFilters(guestUser, [General.SYSTEM_GUEST_ROLE], nonAdminMembership), true);
+            assert.equal(applyRolesFilters(guestUser, [General.SYSTEM_USER_ROLE, General.TEAM_USER_ROLE, General.TEAM_ADMIN_ROLE, General.CHANNEL_USER_ROLE, General.CHANNEL_ADMIN_ROLE], nonAdminMembership), false);
+            assert.equal(applyRolesFilters(guestUser, [General.SYSTEM_GUEST_ROLE], adminMembership), true);
+            assert.equal(applyRolesFilters(guestUser, [General.SYSTEM_USER_ROLE, General.TEAM_USER_ROLE, General.TEAM_ADMIN_ROLE, General.CHANNEL_USER_ROLE, General.CHANNEL_ADMIN_ROLE], adminMembership), false);
+        });
+    });
+
+    describe('includesAnAdminRole', () => {
+        test('returns expected result', () => {
+            [
+                [General.SYSTEM_ADMIN_ROLE, true],
+                [General.SYSTEM_USER_MANAGER_ROLE, true],
+                [General.SYSTEM_READ_ONLY_ADMIN_ROLE, true],
+                [General.SYSTEM_MANAGER_ROLE, true],
+                ['non_existent', false],
+                ['foo', false],
+                ['bar', false],
+            ].forEach(([role, expected]) => {
+                const mockRoles = `foo ${role} bar`;
+                const actual = includesAnAdminRole(mockRoles);
+                assert.equal(actual, expected);
+            });
         });
     });
 });

@@ -13,7 +13,7 @@ import {getCurrentUserId} from 'selectors/entities/users';
 
 import {GetStateFunc, DispatchFunc, ActionFunc, ActionResult, batchActions, Action} from 'types/actions';
 
-import {Team, TeamMembership, TeamMemberWithError, GetTeamMembersOpts} from 'types/teams';
+import {Team, TeamMembership, TeamMemberWithError, GetTeamMembersOpts, TeamsWithCount, TeamSearchOpts} from 'types/teams';
 
 import {selectChannel} from './channels';
 import {logError} from './errors';
@@ -53,7 +53,7 @@ async function getProfilesAndStatusesForMembers(userIds: string[], dispatch: Dis
 }
 
 export function selectTeam(team: Team | string): ActionFunc {
-    return async (dispatch: DispatchFunc, getState: GetStateFunc) => {
+    return async (dispatch: DispatchFunc) => {
         const teamId = (typeof team === 'string') ? team : team.id;
         dispatch({
             type: TeamTypes.SELECT_TEAM,
@@ -107,7 +107,7 @@ export function getTeams(page = 0, perPage: number = General.TEAMS_CHUNK_SIZE, i
         dispatch({type: TeamTypes.GET_TEAMS_REQUEST, data});
 
         try {
-            data = await Client4.getTeams(page, perPage, includeTotalCount);
+            data = await Client4.getTeams(page, perPage, includeTotalCount) as TeamsWithCount;
         } catch (error) {
             forceLogoutIfNecessary(error, dispatch, getState);
             dispatch({type: TeamTypes.GET_TEAMS_FAILURE, data});
@@ -139,13 +139,13 @@ export function getTeams(page = 0, perPage: number = General.TEAMS_CHUNK_SIZE, i
     };
 }
 
-export function searchTeams(term: string, page?: number, perPage?: number): ActionFunc {
+export function searchTeams(term: string, opts: TeamSearchOpts = {}): ActionFunc {
     return async (dispatch: DispatchFunc, getState: GetStateFunc) => {
         dispatch({type: TeamTypes.GET_TEAMS_REQUEST, data: null});
 
         let response;
         try {
-            response = await Client4.searchTeams(term, page, perPage);
+            response = await Client4.searchTeams(term, opts);
         } catch (error) {
             forceLogoutIfNecessary(error, dispatch, getState);
             dispatch(batchActions([
@@ -155,7 +155,13 @@ export function searchTeams(term: string, page?: number, perPage?: number): Acti
             return {error};
         }
 
-        const teams = response.teams || response;
+        // The type of the response is determined by whether or not page/perPage were set
+        let teams;
+        if (!opts.page || !opts.per_page) {
+            teams = response as Team[];
+        } else {
+            teams = (response as TeamsWithCount).teams;
+        }
 
         dispatch(batchActions([
             {
@@ -474,9 +480,9 @@ export function addUsersToTeamGracefully(teamId: string, userIds: Array<string>)
             return {error};
         }
 
-        const added_members = result ? result.filter((m) => !m.error) : [];
-        const profiles: Partial<UserProfile>[] = added_members.map((m) => ({id: m.user_id}));
-        const members = added_members.map((m) => m.member);
+        const addedMembers = result ? result.filter((m) => !m.error) : [];
+        const profiles: Partial<UserProfile>[] = addedMembers.map((m) => ({id: m.user_id}));
+        const members = addedMembers.map((m) => m.member);
         dispatch(batchActions([
             {
                 type: UserTypes.RECEIVED_PROFILES_LIST_IN_TEAM,
@@ -731,6 +737,26 @@ export function membersMinusGroupMembers(teamID: string, groupIDs: Array<string>
             groupIDs,
             page,
             perPage,
+        ],
+    });
+}
+
+export function getInProductNotices(teamId: string, client: string, clientVersion: string): ActionFunc {
+    return bindClientFunc({
+        clientFunc: Client4.getInProductNotices,
+        params: [
+            teamId,
+            client,
+            clientVersion,
+        ],
+    });
+}
+
+export function updateNoticesAsViewed(noticeIds: string[]): ActionFunc {
+    return bindClientFunc({
+        clientFunc: Client4.updateNoticesAsViewed,
+        params: [
+            noticeIds,
         ],
     });
 }

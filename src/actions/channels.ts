@@ -1,30 +1,41 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
-import {Client4} from 'client';
-import {General, Preferences} from '../constants';
+
 import {ChannelTypes, PreferenceTypes, UserTypes} from 'action_types';
-import {savePreferences, deletePreferences} from './preferences';
-import {getChannelsIdForTeam, getChannelByName} from 'utils/channel_utils';
+
+import {Client4} from 'client';
+
+import {General, Preferences} from '../constants';
+import {CategoryTypes} from 'constants/channel_categories';
+
+import {getCategoryInTeamByType} from 'selectors/entities/channel_categories';
 import {
+    getChannel as getChannelSelector,
     getChannelsNameMapInTeam,
     getMyChannelMember as getMyChannelMemberSelector,
     getRedirectChannelNameForTeam,
     isManuallyUnread,
 } from 'selectors/entities/channels';
-import {getCurrentTeamId} from 'selectors/entities/teams';
 import {getConfig, getServerVersion} from 'selectors/entities/general';
-import {isMinimumServerVersion} from 'utils/helpers';
+import {getNewSidebarPreference} from 'selectors/entities/preferences';
+import {getCurrentTeamId} from 'selectors/entities/teams';
+import {getCurrentUserId} from 'selectors/entities/users';
 
 import {Action, ActionFunc, batchActions, DispatchFunc, GetStateFunc} from 'types/actions';
 
-import {Channel, ChannelNotifyProps, ChannelMembership, ChannelModerationPatch} from 'types/channels';
+import {Channel, ChannelNotifyProps, ChannelMembership, ChannelModerationPatch, ChannelsWithTotalCount, ChannelSearchOpts} from 'types/channels';
 
 import {PreferenceType} from 'types/preferences';
 
+import {getChannelsIdForTeam, getChannelByName} from 'utils/channel_utils';
+import {isMinimumServerVersion} from 'utils/helpers';
+
+import {addChannelToInitialCategory, addChannelToCategory} from './channel_categories';
 import {logError} from './errors';
 import {bindClientFunc, forceLogoutIfNecessary} from './helpers';
-import {getMissingProfilesByIds} from './users';
+import {savePreferences, deletePreferences} from './preferences';
 import {loadRolesIfNeeded} from './roles';
+import {getMissingProfilesByIds} from './users';
 
 export function selectChannel(channelId: string) {
     return {
@@ -79,6 +90,8 @@ export function createChannel(channel: Channel, userId: string): ActionFunc {
                 type: ChannelTypes.CREATE_CHANNEL_SUCCESS,
             },
         ]));
+
+        dispatch(addChannelToInitialCategory(created, true));
 
         return {data: created};
     };
@@ -140,6 +153,9 @@ export function createDirectChannel(userId: string, otherUserId: string): Action
                 data: [{id: userId}, {id: otherUserId}],
             },
         ]));
+
+        dispatch(addChannelToInitialCategory(created));
+
         dispatch(loadRolesIfNeeded(member.roles.split(' ')));
 
         return {data: created};
@@ -227,6 +243,9 @@ export function createGroupChannel(userIds: Array<string>): ActionFunc {
                 data: profilesInChannel,
             },
         ]));
+
+        dispatch(addChannelToInitialCategory(created));
+
         dispatch(loadRolesIfNeeded((member && member.roles && member.roles.split(' ')) || []));
 
         return {data: created};
@@ -249,7 +268,6 @@ export function patchChannel(channelId: string, patch: Channel): ActionFunc {
             ]));
             return {error};
         }
-
         dispatch(batchActions([
             {
                 type: ChannelTypes.RECEIVED_CHANNEL,
@@ -658,13 +676,17 @@ export function leaveChannel(channelId: string): ActionFunc {
 
 export function joinChannel(userId: string, teamId: string, channelId: string, channelName: string): ActionFunc {
     return async (dispatch: DispatchFunc, getState: GetStateFunc) => {
+        if (!channelId && !channelName) {
+            return {data: null};
+        }
+
         let member: ChannelMembership | undefined | null;
-        let channel;
+        let channel: Channel;
         try {
             if (channelId) {
                 member = await Client4.addToChannel(userId, channelId);
                 channel = await Client4.getChannel(channelId);
-            } else if (channelName) {
+            } else {
                 channel = await Client4.getChannelByName(teamId, channelName, true);
                 if ((channel.type === General.GM_CHANNEL) || (channel.type === General.DM_CHANNEL)) {
                     member = await Client4.getChannelMember(channel.id, userId);
@@ -690,6 +712,9 @@ export function joinChannel(userId: string, teamId: string, channelId: string, c
                 data: member,
             },
         ]));
+
+        dispatch(addChannelToInitialCategory(channel));
+
         if (member) {
             dispatch(loadRolesIfNeeded(member.roles.split(' ')));
         }
@@ -895,13 +920,13 @@ export function getArchivedChannels(teamId: string, page = 0, perPage: number = 
     };
 }
 
-export function getAllChannelsWithCount(page = 0, perPage: number = General.CHANNELS_CHUNK_SIZE, notAssociatedToGroup = '', excludeDefaultChannels = false): ActionFunc {
+export function getAllChannelsWithCount(page = 0, perPage: number = General.CHANNELS_CHUNK_SIZE, notAssociatedToGroup = '', excludeDefaultChannels = false, includeDeleted = false): ActionFunc {
     return async (dispatch: DispatchFunc, getState: GetStateFunc) => {
         dispatch({type: ChannelTypes.GET_ALL_CHANNELS_REQUEST, data: null});
 
         let payload;
         try {
-            payload = await Client4.getAllChannels(page, perPage, notAssociatedToGroup, excludeDefaultChannels, true);
+            payload = await Client4.getAllChannels(page, perPage, notAssociatedToGroup, excludeDefaultChannels, true, includeDeleted) as ChannelsWithTotalCount;
         } catch (error) {
             forceLogoutIfNecessary(error, dispatch, getState);
             dispatch(batchActions([
@@ -1056,13 +1081,13 @@ export function searchChannels(teamId: string, term: string, archived?: boolean)
     };
 }
 
-export function searchAllChannels(term: string, notAssociatedToGroup = '', excludeDefaultChannels = false, page?: number, perPage?: number): ActionFunc {
+export function searchAllChannels(term: string, opts: ChannelSearchOpts = {}): ActionFunc {
     return async (dispatch: DispatchFunc, getState: GetStateFunc) => {
         dispatch({type: ChannelTypes.GET_ALL_CHANNELS_REQUEST, data: null});
 
         let response;
         try {
-            response = await Client4.searchAllChannels(term, notAssociatedToGroup, excludeDefaultChannels, page, perPage);
+            response = await Client4.searchAllChannels(term, opts) as ChannelsWithTotalCount;
         } catch (error) {
             forceLogoutIfNecessary(error, dispatch, getState);
             dispatch(batchActions([
@@ -1197,7 +1222,7 @@ export function updateChannelMemberRoles(channelId: string, userId: string, role
 }
 
 export function updateChannelHeader(channelId: string, header: string): ActionFunc {
-    return async (dispatch: DispatchFunc, getState: GetStateFunc) => {
+    return async (dispatch: DispatchFunc) => {
         Client4.trackEvent('action', 'action_channels_update_header', {channel_id: channelId});
 
         dispatch({
@@ -1213,7 +1238,7 @@ export function updateChannelHeader(channelId: string, header: string): ActionFu
 }
 
 export function updateChannelPurpose(channelId: string, purpose: string): ActionFunc {
-    return async (dispatch: DispatchFunc, getState: GetStateFunc) => {
+    return async (dispatch: DispatchFunc) => {
         Client4.trackEvent('action', 'action_channels_update_purpose', {channel_id: channelId});
 
         dispatch({
@@ -1311,19 +1336,13 @@ export function markChannelAsRead(channelId: string, prevChannelId?: string, upd
 
 // Increments the number of posts in the channel by 1 and marks it as unread if necessary
 
-export function markChannelAsUnread(teamId: string, channelId: string, mentions: Array<string>): ActionFunc {
+export function markChannelAsUnread(teamId: string, channelId: string, mentions: Array<string>, fetchedChannelMember = false): ActionFunc {
     return async (dispatch: DispatchFunc, getState: GetStateFunc) => {
         const state = getState();
         const {myMembers} = state.entities.channels;
         const {currentUserId} = state.entities.users;
 
         const actions: Action[] = [{
-            type: ChannelTypes.INCREMENT_TOTAL_MSG_COUNT,
-            data: {
-                channelId,
-                amount: 1,
-            },
-        }, {
             type: ChannelTypes.INCREMENT_UNREAD_MSG_COUNT,
             data: {
                 teamId,
@@ -1331,8 +1350,19 @@ export function markChannelAsUnread(teamId: string, channelId: string, mentions:
                 amount: 1,
                 onlyMentions: myMembers[channelId] && myMembers[channelId].notify_props &&
                     myMembers[channelId].notify_props.mark_unread === General.MENTION,
+                fetchedChannelMember,
             },
         }];
+
+        if (!fetchedChannelMember) {
+            actions.push({
+                type: ChannelTypes.INCREMENT_TOTAL_MSG_COUNT,
+                data: {
+                    channelId,
+                    amount: 1,
+                },
+            });
+        }
 
         if (mentions && mentions.indexOf(currentUserId) !== -1) {
             actions.push({
@@ -1341,6 +1371,7 @@ export function markChannelAsUnread(teamId: string, channelId: string, mentions:
                     teamId,
                     channelId,
                     amount: 1,
+                    fetchedChannelMember,
                 },
             });
         }
@@ -1383,9 +1414,11 @@ export function getMyChannelMember(channelId: string) {
     });
 }
 
-export function favoriteChannel(channelId: string): ActionFunc {
+export function favoriteChannel(channelId: string, updateCategories = true): ActionFunc {
     return async (dispatch: DispatchFunc, getState: GetStateFunc) => {
-        const {currentUserId} = getState().entities.users;
+        const state = getState();
+        const currentUserId = getCurrentUserId(state);
+
         const preference: PreferenceType = {
             user_id: currentUserId,
             category: Preferences.CATEGORY_FAVORITE_CHANNEL,
@@ -1395,13 +1428,33 @@ export function favoriteChannel(channelId: string): ActionFunc {
 
         Client4.trackEvent('action', 'action_channels_favorite');
 
-        return savePreferences(currentUserId, [preference])(dispatch);
+        if (getNewSidebarPreference(state)) {
+            // The new sidebar is enabled, so favorite the channel by moving it into the current team's Favorites category
+            if (updateCategories) {
+                const channel = getChannelSelector(state, channelId);
+                const category = getCategoryInTeamByType(state, channel.team_id || getCurrentTeamId(state), CategoryTypes.FAVORITES);
+
+                if (category) {
+                    await dispatch(addChannelToCategory(category.id, channelId));
+                }
+            }
+
+            return dispatch({
+                type: PreferenceTypes.RECEIVED_PREFERENCES,
+                data: [preference],
+            });
+        }
+
+        // The old sidebar is enabled, so favorite the channel by calling the preferences API
+        return dispatch(savePreferences(currentUserId, [preference]));
     };
 }
 
-export function unfavoriteChannel(channelId: string): ActionFunc {
+export function unfavoriteChannel(channelId: string, updateCategories = true): ActionFunc {
     return async (dispatch: DispatchFunc, getState: GetStateFunc) => {
-        const {currentUserId} = getState().entities.users;
+        const state = getState();
+        const currentUserId = getCurrentUserId(state);
+
         const preference: PreferenceType = {
             user_id: currentUserId,
             category: Preferences.CATEGORY_FAVORITE_CHANNEL,
@@ -1411,7 +1464,29 @@ export function unfavoriteChannel(channelId: string): ActionFunc {
 
         Client4.trackEvent('action', 'action_channels_unfavorite');
 
-        return deletePreferences(currentUserId, [preference])(dispatch, getState);
+        if (getNewSidebarPreference(state)) {
+            // The new sidebar is enabled, so unfavorite the channel by moving it into the current team's Channels/DMs category
+            if (updateCategories) {
+                const channel = getChannelSelector(state, channelId);
+                const category = getCategoryInTeamByType(
+                    state,
+                    channel.team_id || getCurrentTeamId(state),
+                    channel.type === General.DM_CHANNEL || channel.type === General.GM_CHANNEL ? CategoryTypes.DIRECT_MESSAGES : CategoryTypes.CHANNELS,
+                );
+
+                if (category) {
+                    await dispatch(addChannelToCategory(category.id, channel.id));
+                }
+            }
+
+            return dispatch({
+                type: PreferenceTypes.DELETED_PREFERENCES,
+                data: [preference],
+            });
+        }
+
+        // The old sidebar is enabled, so unfavorite the channel by calling the preferences API
+        return dispatch(deletePreferences(currentUserId, [preference]));
     };
 }
 
@@ -1474,6 +1549,19 @@ export function patchChannelModerations(channelId: string, patch: Array<ChannelM
     });
 }
 
+export function getChannelMemberCountsByGroup(channelId: string, includeTimezones: boolean): ActionFunc {
+    return bindClientFunc({
+        clientFunc: async () => {
+            const channelMemberCountsByGroup = await Client4.getChannelMemberCountsByGroup(channelId, includeTimezones);
+            return {channelId, memberCounts: channelMemberCountsByGroup};
+        },
+        onSuccess: ChannelTypes.RECEIVED_CHANNEL_MEMBER_COUNTS_BY_GROUP,
+        params: [
+            channelId,
+        ],
+    });
+}
+
 export default {
     selectChannel,
     createChannel,
@@ -1508,4 +1596,5 @@ export default {
     unfavoriteChannel,
     membersMinusGroupMembers,
     getChannelModerations,
+    getChannelMemberCountsByGroup,
 };

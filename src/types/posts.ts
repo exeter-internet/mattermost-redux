@@ -4,7 +4,6 @@
 import {CustomEmoji} from './emojis';
 import {FileInfo} from './files';
 import {Reaction} from './reactions';
-import {Channel} from './channels';
 import {
     $ID,
     RelationOneToOne,
@@ -33,7 +32,7 @@ export type PostEmbedType = 'image' | 'message_attachment' | 'opengraph';
 export type PostEmbed = {
     type: PostEmbedType;
     url: string;
-    data: Record<string, any>;
+    data: Record<string, OpenGraphMetadata>;
 };
 
 export type PostImage = {
@@ -74,6 +73,17 @@ export type Post = {
     state?: 'DELETED';
 };
 
+export type PostList = {
+    order: $ID<Post>[];
+    posts: Map<string, Post>;
+    next_post_id: string;
+    prev_post_id: string;
+};
+
+export type PostSearchResults = PostList & {
+    matches: RelationOneToOne<Post, string[]>;
+};
+
 export type PostWithFormatData = Post & {
     isFirstReply: boolean;
     isLastReply: boolean;
@@ -105,10 +115,26 @@ export type PostsState = {
     postsInChannel: Dictionary<Array<PostOrderBlock>>;
     postsInThread: RelationOneToMany<Post, Post>;
     reactions: RelationOneToOne<Post, Dictionary<Reaction>>;
-    openGraph: RelationOneToOne<Post, any>;
+    openGraph: RelationOneToOne<Post, Dictionary<OpenGraphMetadata>>;
     pendingPostIds: Array<string>;
     selectedPostId: string;
     currentFocusedPostId: string;
     messagesHistory: MessageHistory;
     expandedURLs: Dictionary<string>;
+};
+
+export declare type OpenGraphMetadataImage = {
+    secure_url?: string;
+    url: string;
+    height?: number;
+    width?: number;
+}
+
+export declare type OpenGraphMetadata = {
+    type?: string;
+    title?: string;
+    description?: string;
+    site_name?: string;
+    url?: string;
+    images: OpenGraphMetadataImage[];
 };

@@ -46,7 +46,7 @@ export function getPost(state: GlobalState, postId: $ID<Post>): Post {
 }
 
 export function getPostRepliesCount(state: GlobalState, postId: $ID<Post>): number {
-    return state.entities.posts.postsReplies[postId];
+    return state.entities.posts.postsReplies[postId] || 0;
 }
 
 export function getPostsInThread(state: GlobalState): RelationOneToMany<Post, Post> {
@@ -75,7 +75,7 @@ export function getOpenGraphMetadata(state: GlobalState): RelationOneToOne<Post,
     return state.entities.posts.openGraph;
 }
 
-export function getOpenGraphMetadataForUrl(state: GlobalState, postId: string, url: string): object {
+export function getOpenGraphMetadataForUrl(state: GlobalState, postId: string, url: string) {
     const openGraphForPost = state.entities.posts.openGraph[postId];
     return openGraphForPost ? openGraphForPost[url] : undefined;
 }
@@ -514,7 +514,7 @@ export const getCurrentUsersLatestPost: (state: GlobalState, postId: $ID<Post>) 
 
         const lastPost = posts.find((post) => {
             // don't edit webhook posts, deleted posts, or system messages
-            if (post.user_id !== currentUser.id || post.props && post.props.from_webhook || post.state === Posts.POST_DELETED || isSystemMessage(post) || isPostEphemeral(post) || isPostPendingOrFailed(post)) {
+            if (post.user_id !== currentUser.id || (post.props && post.props.from_webhook) || post.state === Posts.POST_DELETED || isSystemMessage(post) || isPostEphemeral(post) || isPostPendingOrFailed(post)) {
                 return false;
             }
 

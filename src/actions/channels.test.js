@@ -8,11 +8,16 @@ import * as Actions from 'actions/channels';
 import {addUserToTeam} from 'actions/teams';
 import {getProfilesByIds, login} from 'actions/users';
 import {createIncomingHook, createOutgoingHook} from 'actions/integrations';
+
 import {Client4} from 'client';
+
 import {General, RequestStatus, Preferences, Permissions} from '../constants';
-import {getPreferenceKey} from 'utils/preference_utils';
+import {CategoryTypes} from '../constants/channel_categories';
+
 import TestHelper from 'test/test_helper';
 import configureStore from 'test/test_store';
+
+import {getPreferenceKey} from 'utils/preference_utils';
 
 const OK_RESPONSE = {status: 'OK'};
 
@@ -780,7 +785,7 @@ describe('Actions.Channels', () => {
                 },
             });
 
-            store.dispatch(Actions.markChannelAsUnread(teamId, channelId, [TestHelper.generateId()]));
+            store.dispatch(Actions.markChannelAsUnread(teamId, channelId, [TestHelper.generateId()], false));
 
             const state = store.getState();
             assert.equal(state.entities.channels.channels[channelId].total_msg_count, 11);
@@ -816,7 +821,7 @@ describe('Actions.Channels', () => {
                 },
             });
 
-            store.dispatch(Actions.markChannelAsUnread(teamId, channelId, [userId]));
+            store.dispatch(Actions.markChannelAsUnread(teamId, channelId, [userId], false));
 
             const state = store.getState();
             assert.equal(state.entities.channels.channels[channelId].total_msg_count, 11);
@@ -852,7 +857,7 @@ describe('Actions.Channels', () => {
                 },
             });
 
-            store.dispatch(Actions.markChannelAsUnread(teamId, channelId, [TestHelper.generateId()]));
+            store.dispatch(Actions.markChannelAsUnread(teamId, channelId, [TestHelper.generateId()], false));
 
             const state = store.getState();
             assert.equal(state.entities.channels.channels[channelId].total_msg_count, 11);
@@ -888,7 +893,7 @@ describe('Actions.Channels', () => {
                 },
             });
 
-            store.dispatch(Actions.markChannelAsUnread(teamId, channelId, [userId]));
+            store.dispatch(Actions.markChannelAsUnread(teamId, channelId, [userId], false));
 
             const state = store.getState();
             assert.equal(state.entities.channels.channels[channelId].total_msg_count, 11);
@@ -896,6 +901,42 @@ describe('Actions.Channels', () => {
             assert.equal(state.entities.channels.myMembers[channelId].mention_count, 1);
             assert.equal(state.entities.teams.myMembers[teamId].msg_count, 0);
             assert.equal(state.entities.teams.myMembers[teamId].mention_count, 1);
+        });
+
+        it('channel member should not be updated if it has already been fetched', async () => {
+            const teamId = TestHelper.generateId();
+            const channelId = TestHelper.generateId();
+            const userId = TestHelper.generateId();
+
+            store = await configureStore({
+                entities: {
+                    channels: {
+                        channels: {
+                            [channelId]: {team_id: teamId, total_msg_count: 8},
+                        },
+                        myMembers: {
+                            [channelId]: {msg_count: 5, mention_count: 2},
+                        },
+                    },
+                    teams: {
+                        myMembers: {
+                            [teamId]: {msg_count: 2, mention_count: 1},
+                        },
+                    },
+                    users: {
+                        currentUserId: userId,
+                    },
+                },
+            });
+
+            store.dispatch(Actions.markChannelAsUnread(teamId, channelId, [userId], true));
+
+            const state = store.getState();
+            assert.equal(state.entities.channels.channels[channelId].total_msg_count, 8);
+            assert.equal(state.entities.channels.myMembers[channelId].msg_count, 5);
+            assert.equal(state.entities.channels.myMembers[channelId].mention_count, 2);
+            assert.equal(state.entities.teams.myMembers[teamId].msg_count, 3);
+            assert.equal(state.entities.teams.myMembers[teamId].mention_count, 2);
         });
     });
 
@@ -1584,9 +1625,17 @@ describe('Actions.Channels', () => {
         );
 
         const mockTotalCount = 84;
+        const mockQuery = {
+            page: 0,
+            per_page: 50,
+            not_associated_to_group: '',
+            exclude_default_channels: false,
+            include_total_count: true,
+            include_deleted: false,
+        };
         nock(Client4.getBaseRoute()).
             get('/channels').
-            query(true).
+            query(mockQuery).
             reply(200, {channels: [TestHelper.basicChannel, userChannel], total_count: mockTotalCount});
 
         assert.ok(store.getState().entities.channels.totalCount === 0);
@@ -1602,6 +1651,19 @@ describe('Actions.Channels', () => {
         assert.ok(data.total_count === mockTotalCount);
 
         assert.ok(store.getState().entities.channels.totalCount === mockTotalCount);
+
+        mockQuery.include_deleted = true;
+        nock(Client4.getBaseRoute()).
+            get('/channels').
+            query(mockQuery).
+            reply(200, {channels: [TestHelper.basicChannel, userChannel], total_count: mockTotalCount});
+
+        await store.dispatch(Actions.getAllChannelsWithCount(0, 50, '', false, true));
+
+        const request = store.getState().requests.channels.getAllChannels;
+        if (request.status === RequestStatus.FAILURE) {
+            throw new Error(JSON.stringify(request.error));
+        }
     });
 
     it('searchAllChannels', async () => {
@@ -1634,10 +1696,10 @@ describe('Actions.Channels', () => {
         );
 
         nock(Client4.getBaseRoute()).
-            post('/channels/search').
+            post('/channels/search?include_deleted=false').
             reply(200, [TestHelper.basicChannel, userChannel]);
 
-        const {data} = await store.dispatch(Actions.searchAllChannels('test', 0));
+        await store.dispatch(Actions.searchAllChannels('test', {}));
 
         const moreRequest = store.getState().requests.channels.getAllChannels;
         if (moreRequest.status === RequestStatus.FAILURE) {
@@ -1645,15 +1707,23 @@ describe('Actions.Channels', () => {
         }
 
         nock(Client4.getBaseRoute()).
-            post('/channels/search').
+            post('/channels/search?include_deleted=false').
             reply(200, {channels: [TestHelper.basicChannel, userChannel], total_count: 2});
 
-        const response = await store.dispatch(Actions.searchAllChannels('test', '', false, 0, 100));
+        let response = await store.dispatch(Actions.searchAllChannels('test', {exclude_default_channels: false, page: 0, per_page: 100}));
 
         const paginatedRequest = store.getState().requests.channels.getAllChannels;
         if (paginatedRequest.status === RequestStatus.FAILURE) {
             throw new Error(JSON.stringify(paginatedRequest.error));
         }
+
+        assert.ok(response.data.channels.length === 2);
+
+        nock(Client4.getBaseRoute()).
+            post('/channels/search?include_deleted=true').
+            reply(200, {channels: [TestHelper.basicChannel, userChannel], total_count: 2});
+
+        response = await store.dispatch(Actions.searchAllChannels('test', {exclude_default_channels: false, page: 0, per_page: 100, include_deleted: true}));
 
         assert.ok(response.data.channels.length === 2);
     });
@@ -1954,179 +2024,396 @@ describe('Actions.Channels', () => {
         assert.deepEqual(channel.purpose, purpose);
     });
 
-    it('leaveChannel', (done) => {
-        async function test() {
-            TestHelper.mockLogin();
-            await store.dispatch(login(TestHelper.basicUser.email, 'password1'));
-            nock(Client4.getBaseRoute()).
-                get(`/channels/${TestHelper.basicChannel.id}`).
-                reply(200, TestHelper.basicChannel);
+    describe('leaveChannel', () => {
+        const team = TestHelper.fakeTeam();
+        const user = TestHelper.fakeUser();
+
+        test('should delete the channel member when leaving a public channel', async () => {
+            const channel = {id: 'channel', team_id: team.id, type: General.OPEN_CHANNEL};
+
+            store = await configureStore({
+                entities: {
+                    channels: {
+                        channels: {
+                            channel,
+                        },
+                        myMembers: {
+                            [channel.id]: {channel_id: channel.id, user_id: user.id},
+                        },
+                    },
+                },
+            });
 
             nock(Client4.getBaseRoute()).
-                post(`/channels/${TestHelper.basicChannel.id}/members`).
-                reply(201, {channel_id: TestHelper.basicChannel.id, roles: 'channel_user', user_id: TestHelper.basicUser.id});
-
-            await store.dispatch(Actions.joinChannel(TestHelper.basicUser.id, TestHelper.basicTeam.id, TestHelper.basicChannel.id));
-
-            const {channels, myMembers} = store.getState().entities.channels;
-            assert.ok(channels[TestHelper.basicChannel.id]);
-            assert.ok(myMembers[TestHelper.basicChannel.id]);
-
-            nock(Client4.getBaseRoute()).
-                delete(`/channels/${TestHelper.basicChannel.id}/members/${TestHelper.basicUser.id}`).
-                reply(400, {});
-
-            nock(Client4.getBaseRoute()).
-                delete(`/channels/${TestHelper.basicChannel.id}/members/${TestHelper.basicUser.id}`).
+                delete(`/channels/${channel.id}/members/${user.id}`).
                 reply(200, OK_RESPONSE);
 
-            // This action will retry after 1000ms
-            await store.dispatch(Actions.leaveChannel(TestHelper.basicChannel.id));
+            await store.dispatch(Actions.leaveChannel(channel.id));
 
-            setTimeout(test2, 300);
-        }
+            const state = store.getState();
 
-        async function test2() {
-            // retry will have completed and should have left the channel successfully
-            const {channels, myMembers} = store.getState().entities.channels;
+            expect(state.entities.channels.channels[channel.id]).toBeDefined();
+            expect(state.entities.channels.myMembers[channel.id]).not.toBeDefined();
+        });
 
-            assert.ok(channels[TestHelper.basicChannel.id]);
-            assert.ifError(myMembers[TestHelper.basicChannel.id]);
-            done();
-        }
+        test('should delete the channel member and channel when leaving a private channel', async () => {
+            const channel = {id: 'channel', team_id: team.id, type: General.PRIVATE_CHANNEL};
 
-        test();
+            store = await configureStore({
+                entities: {
+                    channels: {
+                        channels: {
+                            channel,
+                        },
+                        myMembers: {
+                            [channel.id]: {channel_id: channel.id, user_id: user.id},
+                        },
+                    },
+                },
+            });
+
+            nock(Client4.getBaseRoute()).
+                delete(`/channels/${channel.id}/members/${user.id}`).
+                reply(200, OK_RESPONSE);
+
+            await store.dispatch(Actions.leaveChannel(channel.id));
+
+            const state = store.getState();
+
+            expect(state.entities.channels.channels[channel.id]).not.toBeDefined();
+            expect(state.entities.channels.myMembers[channel.id]).not.toBeDefined();
+        });
+
+        test('should remove a channel from the sidebar when leaving it', async () => {
+            const channel = {id: 'channel', team_id: team.id, type: General.OPEN_CHANNEL};
+            const category = {id: 'category', team_id: team.id, type: CategoryTypes.CUSTOM, channel_ids: [channel.id]};
+
+            store = await configureStore({
+                entities: {
+                    channelCategories: {
+                        byId: {
+                            category,
+                        },
+                        orderByTeam: {
+                            [team.id]: [category.id],
+                        },
+                    },
+                    channels: {
+                        channels: {
+                            channel,
+                        },
+                        myMembers: {
+                            [channel.id]: {channel_id: channel.id, user_id: user.id},
+                        },
+                    },
+                    general: {
+                        config: {
+                            ExperimentalChannelSidebarOrganization: 'default_on',
+                        },
+                    },
+                    users: {
+                        currentUserId: user.id,
+                    },
+                },
+            });
+
+            nock(Client4.getBaseRoute()).
+                delete(`/channels/${channel.id}/members/${user.id}`).
+                reply(200, OK_RESPONSE);
+
+            await store.dispatch(Actions.leaveChannel(channel.id));
+
+            const state = store.getState();
+
+            expect(state.entities.channels.channels[channel.id]).toBeDefined();
+            expect(state.entities.channels.myMembers[channel.id]).not.toBeDefined();
+            expect(state.entities.channelCategories.byId[category.id].channel_ids).toEqual([]);
+        });
     });
 
-    it('leave private channel', async () => {
-        const newChannel = {
-            team_id: TestHelper.basicTeam.id,
-            name: 'redux-test-private',
-            display_name: 'Redux Test',
-            purpose: 'This is to test redux',
-            header: 'MM with Redux',
-            type: 'P',
-        };
+    test('joinChannel', async () => {
+        const channel = TestHelper.basicChannel;
+        const team = TestHelper.basicTeam;
+        const user = TestHelper.basicUser;
+
+        const channelsCategory = {id: 'channelsCategory', team_id: team.id, type: CategoryTypes.CHANNELS, channel_ids: []};
+
+        store = await configureStore({
+            entities: {
+                channelCategories: {
+                    byId: {
+                        channelsCategory,
+                    },
+                    orderByTeam: {
+                        [team.id]: ['channelsCategory'],
+                    },
+                },
+                general: {
+                    config: {
+                        ExperimentalChannelSidebarOrganization: 'default_on',
+                    },
+                },
+                users: {
+                    currentUserId: user.id,
+                },
+            },
+        });
 
         nock(Client4.getBaseRoute()).
-            post('/channels').
-            reply(201, {...TestHelper.fakeChannelWithId(TestHelper.basicTeam.id), ...newChannel});
-
-        const {data: channel} = await store.dispatch(Actions.createChannel(newChannel, TestHelper.basicUser.id));
-        let channels = store.getState().entities.channels.channels;
-        assert.ok(channels[channel.id]);
+            get(`/channels/${channel.id}`).
+            reply(200, channel);
 
         nock(Client4.getBaseRoute()).
-            delete(`/channels/${TestHelper.basicChannel.id}/members/${TestHelper.basicUser.id}`).
-            reply(200, OK_RESPONSE);
-
-        await store.dispatch(Actions.leaveChannel(channel.id));
-        channels = store.getState().entities.channels.channels;
-        const myMembers = store.getState().entities.channels.myMembers;
-        assert.ok(!channels[channel.id]);
-        assert.ok(!myMembers[channel.id]);
-    });
-
-    it('joinChannel', async () => {
-        nock(Client4.getBaseRoute()).
-            get(`/channels/${TestHelper.basicChannel.id}`).
-            reply(200, TestHelper.basicChannel);
+            post(`/channels/${channel.id}/members`).
+            reply(201, {channel_id: channel.id, roles: 'channel_user', user_id: user.id});
 
         nock(Client4.getBaseRoute()).
-            post(`/channels/${TestHelper.basicChannel.id}/members`).
-            reply(201, {channel_id: TestHelper.basicChannel.id, roles: 'channel_user', user_id: TestHelper.basicUser.id});
+            put(`/users/${user.id}/teams/${team.id}/channels/categories`).
+            reply(200, [{...channelsCategory, channel_ids: []}]);
 
-        await store.dispatch(Actions.joinChannel(TestHelper.basicUser.id, TestHelper.basicTeam.id, TestHelper.basicChannel.id));
-
-        const {channels, myMembers} = store.getState().entities.channels;
-        assert.ok(channels[TestHelper.basicChannel.id]);
-        assert.ok(myMembers[TestHelper.basicChannel.id]);
-    });
-
-    it('joinChannelByName', async () => {
-        const secondClient = TestHelper.createClient4();
-
-        nock(Client4.getBaseRoute()).
-            post('/users').
-            query(true).
-            reply(201, TestHelper.fakeUserWithId());
-
-        const user = await TestHelper.basicClient4.createUser(
-            TestHelper.fakeUser(),
-            null,
-            null,
-            TestHelper.basicTeam.invite_id,
-        );
-
-        nock(Client4.getBaseRoute()).
-            post('/users/login').
-            reply(200, user);
-
-        await secondClient.login(user.email, 'password1');
-
-        nock(Client4.getBaseRoute()).
-            post('/channels').
-            reply(201, TestHelper.fakeChannelWithId(TestHelper.basicTeam.id));
-
-        const secondChannel = await secondClient.createChannel(
-            TestHelper.fakeChannel(TestHelper.basicTeam.id));
-
-        nock(Client4.getTeamsRoute()).
-            get(`/${TestHelper.basicTeam.id}/channels/name/${secondChannel.name}?include_deleted=true`).
-            reply(200, secondChannel);
-
-        nock(Client4.getBaseRoute()).
-            post(`/channels/${secondChannel.id}/members`).
-            reply(201, {channel_id: secondChannel.id, roles: 'channel_user', user_id: TestHelper.basicUser.id});
-
-        await store.dispatch(Actions.joinChannel(
-            TestHelper.basicUser.id,
-            TestHelper.basicTeam.id,
-            null,
-            secondChannel.name,
-        ));
-
-        const {channels, myMembers} = store.getState().entities.channels;
-        assert.ok(channels[secondChannel.id]);
-        assert.ok(myMembers[secondChannel.id]);
-    });
-
-    it('favoriteChannel', async () => {
-        nock(Client4.getBaseRoute()).
-            put(`/users/${TestHelper.basicUser.id}/preferences`).
-            reply(200, OK_RESPONSE);
-
-        await store.dispatch(Actions.favoriteChannel(TestHelper.basicChannel.id));
+        await store.dispatch(Actions.joinChannel(user.id, team.id, channel.id));
 
         const state = store.getState();
-        const prefKey = getPreferenceKey(Preferences.CATEGORY_FAVORITE_CHANNEL, TestHelper.basicChannel.id);
-        const preference = state.entities.preferences.myPreferences[prefKey];
-        assert.ok(preference);
-        assert.ok(preference.value === 'true');
+
+        expect(state.entities.channels.channels[channel.id]).toBeDefined();
+        expect(state.entities.channels.myMembers[channel.id]).toBeDefined();
+        expect(state.entities.channelCategories.byId[channelsCategory.id].channel_ids).toEqual([channel.id]);
     });
 
-    it('unfavoriteChannel', async () => {
+    test('joinChannelByName', async () => {
+        const channel = TestHelper.basicChannel;
+        const team = TestHelper.basicTeam;
+        const user = TestHelper.basicUser;
+
+        const channelsCategory = {id: 'channelsCategory', team_id: team.id, type: CategoryTypes.CHANNELS, channel_ids: []};
+
+        store = await configureStore({
+            entities: {
+                channelCategories: {
+                    byId: {
+                        channelsCategory,
+                    },
+                    orderByTeam: {
+                        [team.id]: ['channelsCategory'],
+                    },
+                },
+                users: {
+                    currentUserId: user.id,
+                },
+            },
+        });
+
+        nock(Client4.getTeamsRoute()).
+            get(`/${TestHelper.basicTeam.id}/channels/name/${channel.name}?include_deleted=true`).
+            reply(200, channel);
+
+        nock(Client4.getBaseRoute()).
+            post(`/channels/${channel.id}/members`).
+            reply(201, {channel_id: channel.id, roles: 'channel_user', user_id: TestHelper.basicUser.id});
+
+        nock(Client4.getBaseRoute()).
+            put(`/users/${user.id}/teams/${team.id}/channels/categories`).
+            reply(200, [{...channelsCategory, channel_ids: []}]);
+
+        await store.dispatch(Actions.joinChannel(user.id, team.id, '', channel.name));
+
+        const state = store.getState();
+
+        expect(state.entities.channels.channels[channel.id]).toBeDefined();
+        expect(state.entities.channels.myMembers[channel.id]).toBeDefined();
+        expect(state.entities.channelCategories.byId[channelsCategory.id].channel_ids).toEqual([channel.id]);
+    });
+
+    test('favoriteChannel with new sidebar', async () => {
+        const channel = TestHelper.basicChannel;
+        const team = TestHelper.basicTeam;
+        const currentUserId = TestHelper.generateId();
+
+        const favoritesCategory = {id: 'favoritesCategory', team_id: team.id, type: CategoryTypes.FAVORITES, channel_ids: []};
+        const channelsCategory = {id: 'channelsCategory', team_id: team.id, type: CategoryTypes.CHANNELS, channel_ids: [channel.id]};
+
+        store = await configureStore({
+            entities: {
+                channels: {
+                    channels: {
+                        [channel.id]: channel,
+                    },
+                },
+                channelCategories: {
+                    byId: {
+                        favoritesCategory,
+                        channelsCategory,
+                    },
+                    orderByTeam: {
+                        [team.id]: ['favoritesCategory', 'channelsCategory'],
+                    },
+                },
+                general: {
+                    config: {
+                        ExperimentalChannelSidebarOrganization: 'default_on',
+                    },
+                },
+                users: {
+                    currentUserId,
+                },
+            },
+        });
+
+        nock(Client4.getBaseRoute()).
+            put(`/users/${currentUserId}/teams/${team.id}/channels/categories`).
+            reply(200, [
+                {...favoritesCategory, channel_ids: [channel.id]},
+                {...channelsCategory, channel_ids: []},
+            ]);
+
+        await store.dispatch(Actions.favoriteChannel(channel.id));
+
+        const state = store.getState();
+
+        // Should favorite the channel in preferences
+        const prefKey = getPreferenceKey(Preferences.CATEGORY_FAVORITE_CHANNEL, channel.id);
+        expect(state.entities.preferences.myPreferences[prefKey]).toMatchObject({value: 'true'});
+
+        // And in channel categories
+        expect(state.entities.channelCategories.byId.favoritesCategory.channel_ids).toEqual([channel.id]);
+        expect(state.entities.channelCategories.byId.channelsCategory.channel_ids).toEqual([]);
+    });
+
+    test('favoriteChannel with old sidebar enabled', async () => {
+        const channel = TestHelper.basicChannel;
+        const currentUserId = TestHelper.generateId();
+
+        store = await configureStore({
+            entities: {
+                channels: {
+                    channels: {
+                        [channel.id]: channel,
+                    },
+                },
+                general: {
+                    config: {
+                        ExperimentalChannelSidebarOrganization: 'disabled',
+                    },
+                },
+                users: {
+                    currentUserId,
+                },
+            },
+        });
+
         nock(Client4.getBaseRoute()).
             put(`/users/${TestHelper.basicUser.id}/preferences`).
             reply(200, OK_RESPONSE);
 
-        await store.dispatch(Actions.favoriteChannel(TestHelper.basicChannel.id));
+        await store.dispatch(Actions.favoriteChannel(channel.id));
 
-        let state = store.getState();
-        let prefKey = getPreferenceKey(Preferences.CATEGORY_FAVORITE_CHANNEL, TestHelper.basicChannel.id);
-        let preference = state.entities.preferences.myPreferences[prefKey];
-        assert.ok(preference);
-        assert.ok(preference.value === 'true');
+        const state = store.getState();
+
+        // Should favorite the channel in preferences
+        const prefKey = getPreferenceKey(Preferences.CATEGORY_FAVORITE_CHANNEL, channel.id);
+        expect(state.entities.preferences.myPreferences[prefKey]).toMatchObject({value: 'true'});
+    });
+
+    it('unfavoriteChannel with new sidebar enabled', async () => {
+        const channel = TestHelper.basicChannel;
+        const team = TestHelper.basicTeam;
+        const currentUserId = TestHelper.generateId();
+
+        const prefKey = getPreferenceKey(Preferences.CATEGORY_FAVORITE_CHANNEL, channel.id);
+
+        const favoritesCategory = {id: 'favoritesCategory', team_id: team.id, type: CategoryTypes.FAVORITES, channel_ids: [channel.id]};
+        const channelsCategory = {id: 'channelsCategory', team_id: team.id, type: CategoryTypes.CHANNELS, channel_ids: []};
+
+        store = await configureStore({
+            entities: {
+                channels: {
+                    channels: {
+                        [channel.id]: channel,
+                    },
+                },
+                channelCategories: {
+                    byId: {
+                        favoritesCategory,
+                        channelsCategory,
+                    },
+                    orderByTeam: {
+                        [team.id]: ['favoritesCategory', 'channelsCategory'],
+                    },
+                },
+                general: {
+                    config: {
+                        ExperimentalChannelSidebarOrganization: 'default_on',
+                    },
+                },
+                preferences: {
+                    myPreferences: {
+                        [prefKey]: {value: 'true'},
+                    },
+                },
+                users: {
+                    currentUserId,
+                },
+            },
+        });
 
         nock(Client4.getBaseRoute()).
-            delete(`/users/${TestHelper.basicUser.id}/preferences`).
-            reply(200, OK_RESPONSE);
-        store.dispatch(Actions.unfavoriteChannel(TestHelper.basicChannel.id));
+            put(`/users/${currentUserId}/teams/${team.id}/channels/categories`).
+            reply(200, [
+                {...favoritesCategory, channel_ids: []},
+                {...channelsCategory, channel_ids: [channel.id]},
+            ]);
 
-        state = store.getState();
-        prefKey = getPreferenceKey(Preferences.CATEGORY_FAVORITE_CHANNEL, TestHelper.basicChannel.id);
-        preference = state.entities.preferences.myPreferences[prefKey];
-        assert.ok(!preference);
+        await store.dispatch(Actions.unfavoriteChannel(channel.id));
+
+        const state = store.getState();
+
+        // Should unfavorite the channel in preferences
+        expect(state.entities.preferences.myPreferences[prefKey]).toBeUndefined();
+
+        // And in channel categories
+        expect(state.entities.channelCategories.byId.favoritesCategory.channel_ids).toEqual([]);
+        expect(state.entities.channelCategories.byId.channelsCategory.channel_ids).toEqual([channel.id]);
+    });
+
+    test('unfavoriteChannel with old sidebar', async () => {
+        const channel = TestHelper.basicChannel;
+        const currentUserId = TestHelper.generateId();
+
+        const prefKey = getPreferenceKey(Preferences.CATEGORY_FAVORITE_CHANNEL, channel.id);
+
+        store = await configureStore({
+            entities: {
+                channels: {
+                    channels: {
+                        [channel.id]: channel,
+                    },
+                },
+                general: {
+                    config: {
+                        ExperimentalChannelSidebarOrganization: 'disabled',
+                    },
+                },
+                preferences: {
+                    myPreferences: {
+                        [prefKey]: {value: 'true'},
+                    },
+                },
+                users: {
+                    currentUserId,
+                },
+            },
+        });
+
+        nock(Client4.getBaseRoute()).
+            put(`/users/${TestHelper.basicUser.id}/preferences`).
+            reply(200, OK_RESPONSE);
+
+        await store.dispatch(Actions.unfavoriteChannel(channel.id));
+
+        const state = store.getState();
+
+        // Should unfavorite the channel in preferences
+        expect(state.entities.preferences.myPreferences[prefKey]).toBeUndefined();
     });
 
     it('autocompleteChannels', async () => {
@@ -2326,5 +2613,35 @@ describe('Actions.Channels', () => {
         assert.equal(moderations[0].name, Permissions.CHANNEL_MODERATED_PERMISSIONS.CREATE_REACTIONS);
         assert.equal(moderations[0].roles.members, true);
         assert.equal(moderations[0].roles.guests, false);
+    });
+
+    it('getChannelMemberCountsByGroup', async () => {
+        const channelID = 'cid10000000000000000000000';
+
+        nock(Client4.getBaseRoute()).get(
+            `/channels/${channelID}/member_counts_by_group?include_timezones=true`).
+            reply(200, [
+                {
+                    group_id: 'group-1',
+                    channel_member_count: 1,
+                    channel_member_timezones_count: 1,
+                },
+                {
+                    group_id: 'group-2',
+                    channel_member_count: 999,
+                    channel_member_timezones_count: 131,
+                },
+            ]);
+
+        await store.dispatch(Actions.getChannelMemberCountsByGroup(channelID, true));
+
+        const channelMemberCounts = store.getState().entities.channels.channelMemberCountsByGroup[channelID];
+        assert.equal(channelMemberCounts['group-1'].group_id, 'group-1');
+        assert.equal(channelMemberCounts['group-1'].channel_member_count, 1);
+        assert.equal(channelMemberCounts['group-1'].channel_member_timezones_count, 1);
+
+        assert.equal(channelMemberCounts['group-2'].group_id, 'group-2');
+        assert.equal(channelMemberCounts['group-2'].channel_member_count, 999);
+        assert.equal(channelMemberCounts['group-2'].channel_member_timezones_count, 131);
     });
 });

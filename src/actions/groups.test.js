@@ -7,7 +7,7 @@ import nock from 'nock';
 import * as Actions from 'actions/groups';
 import {Client4} from 'client';
 
-import {RequestStatus, Groups} from '../constants';
+import {Groups} from '../constants';
 import TestHelper from 'test/test_helper';
 import configureStore from 'test/test_store';
 
@@ -98,64 +98,6 @@ describe('Actions.Groups', () => {
             assert.ok(JSON.stringify(groupSyncables.teams[i]) === JSON.stringify(groupTeams[i]));
             assert.ok(JSON.stringify(groupSyncables.channels[i]) === JSON.stringify(groupChannels[i]));
         }
-    });
-
-    it('getGroupMembers', async () => {
-        const groupID = '5rgoajywb3nfbdtyafbod47rya';
-
-        const response = {
-            members: [
-                {
-                    id: 'ok1mtgwrn7gbzetzfdgircykir',
-                    create_at: 1542658437708,
-                    update_at: 1542658441412,
-                    delete_at: 0,
-                    username: 'test.161927',
-                    auth_data: 'test.161927',
-                    auth_service: 'ldap',
-                    email: 'success+test.161927@simulator.amazonses.com',
-                    email_verified: true,
-                    nickname: '',
-                    first_name: 'test',
-                    last_name: 'test.161927',
-                    position: '',
-                    roles: 'system_user',
-                    notify_props: {
-                        channel: 'true',
-                        comments: 'never',
-                        desktop: 'mention',
-                        desktop_sound: 'true',
-                        email: 'true',
-                        first_name: 'false',
-                        mention_keys: 'test.161927,@test.161927',
-                        push: 'mention',
-                        push_status: 'away',
-                    },
-                    last_password_update: 1542658437708,
-                    locale: 'en',
-                    timezone: {
-                        automaticTimezone: '',
-                        manualTimezone: '',
-                        useAutomaticTimezone: 'true',
-                    },
-                },
-            ],
-            total_member_count: 1,
-        };
-
-        nock(Client4.getBaseRoute()).
-            get(`/groups/${groupID}/members?page=0&per_page=100`).
-            reply(200, response);
-
-        await Actions.getGroupMembers(groupID, 0, 100)(store.dispatch, store.getState);
-
-        const state = store.getState();
-
-        const groupMembers = state.entities.groups.members;
-        assert.ok(groupMembers);
-        assert.ok(groupMembers[groupID].totalMemberCount === response.total_member_count);
-
-        assert.ok(JSON.stringify(response.members[0]) === JSON.stringify(groupMembers[groupID].members[0]));
     });
 
     it('getGroup', async () => {
@@ -329,10 +271,10 @@ describe('Actions.Groups', () => {
         };
 
         nock(Client4.getBaseRoute()).
-            get('/groups?filter_allow_reference=true').
+            get('/groups?filter_allow_reference=true&page=0&per_page=0').
             reply(200, response1.groups);
 
-        await Actions.getGroups(true)(store.dispatch, store.getState);
+        await Actions.getGroups(true, 0, 0)(store.dispatch, store.getState);
 
         const state = store.getState();
 
@@ -397,10 +339,10 @@ describe('Actions.Groups', () => {
         };
 
         nock(Client4.getBaseRoute()).
-            get(`/teams/${teamID}/groups?paginate=false&filter_allow_reference=false`).
+            get(`/teams/${teamID}/groups?paginate=false&filter_allow_reference=false&include_member_count=true`).
             reply(200, response);
 
-        await Actions.getAllGroupsAssociatedToTeam(teamID)(store.dispatch, store.getState);
+        await Actions.getAllGroupsAssociatedToTeam(teamID, false, true)(store.dispatch, store.getState);
 
         const state = store.getState();
 
@@ -561,10 +503,10 @@ describe('Actions.Groups', () => {
         };
 
         nock(Client4.getBaseRoute()).
-            get(`/channels/${channelID}/groups?paginate=false&filter_allow_reference=false`).
+            get(`/channels/${channelID}/groups?paginate=false&filter_allow_reference=false&include_member_count=true`).
             reply(200, response);
 
-        await Actions.getAllGroupsAssociatedToChannel(channelID)(store.dispatch, store.getState);
+        await Actions.getAllGroupsAssociatedToChannel(channelID, false, true)(store.dispatch, store.getState);
 
         const state = store.getState();
 
@@ -578,7 +520,6 @@ describe('Actions.Groups', () => {
     it('getAllGroupsAssociatedToChannelsInTeam', async () => {
         const teamID = 'ge63nq31sbfy3duzq5f7yqn1kh';
         const channelID1 = '5rgoajywb3nfbdtyafbod47ryb';
-        const channelID2 = 'o3tdawqxot8kikzq8bk54zggbc';
 
         const response1 = {
             groups: {
@@ -892,6 +833,46 @@ describe('Actions.Groups', () => {
         assert.ok(groups[groupID]);
         assert.ok(groups[groupID].allow_reference === groupPatch.allow_reference);
         assert.ok(JSON.stringify(response) === JSON.stringify(groups[groupID]));
+
+        //with name="newname"
+        groupPatch.name = 'newname';
+        response.name = 'newname';
+
+        nock(Client4.getBaseRoute()).
+            put(`/groups/${groupID}/patch`).
+            reply(200, response);
+
+        await Actions.patchGroup(groupID, groupPatch)(store.dispatch, store.getState);
+
+        state = store.getState();
+
+        groups = state.entities.groups.groups;
+        assert.ok(groups);
+        assert.ok(groups[groupID]);
+        assert.ok(groups[groupID].name === groupPatch.name);
+        assert.ok(JSON.stringify(response) === JSON.stringify(groups[groupID]));
+    });
+
+    it('getGroupStats', async () => {
+        const groupID = '5rgoajywb3nfbdtyafbod47rya';
+
+        const response = {
+            group_id: '5rgoajywb3nfbdtyafbod47rya',
+            total_member_count: 55,
+        };
+
+        nock(Client4.getBaseRoute()).
+            get(`/groups/${groupID}/stats`).
+            reply(200, response);
+
+        await Actions.getGroupStats(groupID)(store.dispatch, store.getState);
+
+        const state = store.getState();
+
+        const stats = state.entities.groups.stats;
+        assert.ok(stats);
+        assert.ok(stats[groupID]);
+        assert.ok(JSON.stringify(response) === JSON.stringify(stats[groupID]));
     });
 });
 

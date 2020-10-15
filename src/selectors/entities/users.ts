@@ -9,6 +9,8 @@ import {
     getCurrentUserId,
     getMyCurrentChannelMembership,
     getUsers,
+    getMembersInTeam,
+    getMembersInChannel,
 } from 'selectors/entities/common';
 import {getConfig, getLicense} from 'selectors/entities/general';
 import {getDirectShowPreferences, getTeammateNameDisplaySetting} from 'selectors/entities/preferences';
@@ -17,14 +19,17 @@ import {
     displayUsername,
     filterProfilesMatchingTerm,
     isSystemAdmin,
+    includesAnAdminRole,
     profileListToMap,
     sortByUsername,
+    applyRolesFilters,
 } from 'utils/user_utils';
 
-import {Channel} from 'types/channels';
+import {Channel, ChannelMembership} from 'types/channels';
 import {Reaction} from 'types/reactions';
 import {GlobalState} from 'types/store';
-import {Team} from 'types/teams';
+import {Team, TeamMembership} from 'types/teams';
+import {Group} from 'types/groups';
 import {UserProfile} from 'types/users';
 import {
     $Email,
@@ -43,6 +48,10 @@ export {getCurrentUser, getCurrentUserId, getUsers};
 type Filters = {
     role?: string;
     inactive?: boolean;
+    active?: boolean;
+    roles?: string[];
+    channel_roles?: string[];
+    team_roles?: string[];
 };
 
 export function getUserIdsInChannels(state: GlobalState): RelationOneToMany<Channel, UserProfile> {
@@ -63,6 +72,10 @@ export function getUserIdsNotInTeams(state: GlobalState): RelationOneToMany<Team
 
 export function getUserIdsWithoutTeam(state: GlobalState): Set<$ID<UserProfile>> {
     return state.entities.users.profilesWithoutTeam;
+}
+
+export function getUserIdsInGroups(state: GlobalState): RelationOneToMany<Group, UserProfile> {
+    return state.entities.users.profilesInGroup;
 }
 
 export function getUserStatuses(state: GlobalState): RelationOneToOne<UserProfile, string> {
@@ -121,12 +134,20 @@ export function getUserByEmail(state: GlobalState, email: $Email<UserProfile>): 
 export const isCurrentUserSystemAdmin: (state: GlobalState) => boolean = createSelector(
     getCurrentUser,
     (user) => {
-        const roles = user.roles || '';
+        const roles = user?.roles || '';
         return isSystemAdmin(roles);
     },
 );
 
-export const getCurrentUserRoles: (state: GlobalState) => UserProfile['roles'] = createSelector(
+export const currentUserHasAnAdminRole: (state: GlobalState) => boolean = createSelector(
+    getCurrentUser,
+    (user) => {
+        const roles = user.roles || '';
+        return includesAnAdminRole(roles);
+    },
+);
+
+export const getCurrentUserRoles: (a: GlobalState) => UserProfile['roles'] = createSelector(
     getMyCurrentChannelMembership,
     (state) => state.entities.teams.myMembers[state.entities.teams.currentTeamId],
     getCurrentUser,
@@ -219,7 +240,7 @@ export const getProfileSetNotInCurrentTeam: (state: GlobalState) => Array<$ID<Us
 );
 
 const PROFILE_SET_ALL = 'all';
-function sortAndInjectProfiles(profiles: IDMappedObjects<UserProfile>, profileSet?: 'all' | Array<$ID<UserProfile>> | Set<$ID<UserProfile>>, skipInactive = false): Array<UserProfile> {
+function sortAndInjectProfiles(profiles: IDMappedObjects<UserProfile>, profileSet?: 'all' | Array<$ID<UserProfile>> | Set<$ID<UserProfile>>): Array<UserProfile> {
     let currentProfiles: UserProfile[] = [];
 
     if (typeof profileSet === 'undefined') {
@@ -232,10 +253,6 @@ function sortAndInjectProfiles(profiles: IDMappedObjects<UserProfile>, profileSe
 
     currentProfiles = currentProfiles.filter((profile) => Boolean(profile));
 
-    if (skipInactive) {
-        currentProfiles = currentProfiles.filter((profile) => !(profile.delete_at && profile.delete_at !== 0));
-    }
-
     return currentProfiles.sort(sortByUsername);
 }
 
@@ -247,19 +264,25 @@ export const getProfiles: (state: GlobalState, filters: Filters) => Array<UserPr
     },
 );
 
-function filterProfiles(profiles: IDMappedObjects<UserProfile>, filters?: Filters): IDMappedObjects<UserProfile> {
+export function filterProfiles(profiles: IDMappedObjects<UserProfile>, filters?: Filters, memberships?: RelationOneToOne<UserProfile, TeamMembership> | RelationOneToOne<UserProfile, ChannelMembership>): IDMappedObjects<UserProfile> {
     if (!filters) {
         return profiles;
     }
 
     let users = Object.keys(profiles).map((key) => profiles[key]);
 
-    if (filters.role && filters.role !== '') {
-        users = users.filter((user) => user.roles && user.roles.includes((filters && filters.role) || ''));
+    const filterRole = (filters.role && filters.role !== '') ? [filters.role] : [];
+    const filterRoles = [...filterRole, ...(filters.roles || []), ...(filters.team_roles || []), ...(filters.channel_roles || [])];
+    if (filterRoles.length > 0) {
+        users = users.filter((user) => {
+            return user.roles.length > 0 && applyRolesFilters(user, filterRoles, memberships?.[user.id]);
+        });
     }
 
     if (filters.inactive) {
         users = users.filter((user) => user.delete_at !== 0);
+    } else if (filters.active) {
+        users = users.filter((user) => user.delete_at === 0);
     }
 
     return users.reduce((acc, user) => {
@@ -296,13 +319,24 @@ export const getProfilesInCurrentTeam: (state: GlobalState) => Array<UserProfile
     },
 );
 
-export const getProfilesInTeam: (state: GlobalState, teamId: $ID<Team>) => Array<UserProfile> = createSelector(
+export const getProfilesInTeam: (state: GlobalState, teamId: $ID<Team>, filters?: Filters) => Array<UserProfile> = createSelector(
     getUsers,
     getUserIdsInTeams,
+    getMembersInTeam,
     (state: GlobalState, teamId: string) => teamId,
-    (state: GlobalState, teamId, filters) => filters,
-    (profiles, usersInTeams, teamId, filters) => {
-        return sortAndInjectProfiles(filterProfiles(profiles, filters), usersInTeams[teamId] || new Set());
+    (state: GlobalState, teamId: string, filters: Filters) => filters,
+    (profiles, usersInTeams, memberships, teamId, filters) => {
+        return sortAndInjectProfiles(filterProfiles(profiles, filters, memberships), usersInTeams[teamId] || new Set());
+    },
+);
+
+export const getProfilesNotInTeam: (state: GlobalState, teamId: $ID<Team>, filters?: Filters) => Array<UserProfile> = createSelector(
+    getUsers,
+    getUserIdsNotInTeams,
+    (state: GlobalState, teamId: string) => teamId,
+    (state: GlobalState, teamId: string, filters: Filters) => filters,
+    (profiles, usersNotInTeams, teamId, filters) => {
+        return sortAndInjectProfiles(filterProfiles(profiles, filters), usersNotInTeams[teamId] || new Set());
     },
 );
 
@@ -331,6 +365,10 @@ export function getTotalUsersStats(state: GlobalState): any {
     return state.entities.users.stats;
 }
 
+export function getFilteredUsersStats(state: GlobalState): any {
+    return state.entities.users.filteredStats;
+}
+
 export function searchProfiles(state: GlobalState, term: string, skipCurrent = false, filters?: Filters): Array<UserProfile> {
     const users = getUsers(state);
     const profiles = filterProfilesMatchingTerm(Object.keys(users).map((key) => users[key]), term);
@@ -342,6 +380,19 @@ export function searchProfiles(state: GlobalState, term: string, skipCurrent = f
     }
 
     return filteredProfiles;
+}
+
+export function makeSearchProfilesInChannel() {
+    const doGetProfilesInChannel = makeGetProfilesInChannel();
+    return (state: GlobalState, channelId: $ID<Channel>, term: string, skipCurrent = false, filters?: Filters): Array<UserProfile> => {
+        const profiles = filterProfilesMatchingTerm(doGetProfilesInChannel(state, channelId, filters), term);
+
+        if (skipCurrent) {
+            removeCurrentUserFromList(profiles, getCurrentUserId(state));
+        }
+
+        return profiles;
+    };
 }
 
 export function searchProfilesInCurrentChannel(state: GlobalState, term: string, skipCurrent = false): Array<UserProfile> {
@@ -373,14 +424,12 @@ export function searchProfilesInCurrentTeam(state: GlobalState, term: string, sk
 }
 
 export function searchProfilesInTeam(state: GlobalState, teamId: $ID<Team>, term: string, skipCurrent = false, filters?: Filters): Array<UserProfile> {
-    const profiles = filterProfilesMatchingTerm(getProfilesInTeam(state, teamId), term);
-    const filteredProfilesMap = filterProfiles(profileListToMap(profiles), filters);
-    const filteredProfiles = Object.keys(filteredProfilesMap).map((key) => filteredProfilesMap[key]);
+    const profiles = filterProfilesMatchingTerm(getProfilesInTeam(state, teamId, filters), term);
     if (skipCurrent) {
-        removeCurrentUserFromList(filteredProfiles, getCurrentUserId(state));
+        removeCurrentUserFromList(profiles, getCurrentUserId(state));
     }
 
-    return filteredProfiles;
+    return profiles;
 }
 
 export function searchProfilesNotInCurrentTeam(state: GlobalState, term: string, skipCurrent = false): Array<UserProfile> {
@@ -454,38 +503,41 @@ export function makeGetProfilesForReactions(): (state: GlobalState, reactions: A
     );
 }
 
-export function makeGetProfilesInChannel(): (state: GlobalState, channelId: $ID<Channel>, skipInactive: boolean) => Array<UserProfile> {
+export function makeGetProfilesInChannel(): (state: GlobalState, channelId: $ID<Channel>, filters?: Filters) => Array<UserProfile> {
     return createSelector(
         getUsers,
         getUserIdsInChannels,
+        getMembersInChannel,
         (state: GlobalState, channelId: string) => channelId,
-        (state, channelId, skipInactive) => skipInactive,
-        (users, userIds, channelId, skipInactive = false) => {
+        (state, channelId, filters) => filters,
+        (users, userIds, membersInChannel, channelId, filters = {}) => {
             const userIdsInChannel = userIds[channelId];
 
             if (!userIdsInChannel) {
                 return [];
             }
 
-            return sortAndInjectProfiles(users, userIdsInChannel, skipInactive);
+            return sortAndInjectProfiles(filterProfiles(users, filters, membersInChannel), userIdsInChannel);
         },
     );
 }
 
-export function makeGetProfilesNotInChannel(): (state: GlobalState, channelId: $ID<Channel>, skipInactive: boolean) => Array<UserProfile> {
+export function makeGetProfilesNotInChannel(): (state: GlobalState, channelId: $ID<Channel>, filters?: Filters) => Array<UserProfile> {
     return createSelector(
         getUsers,
         getUserIdsNotInChannels,
         (state: GlobalState, channelId: string) => channelId,
-        (state, channelId, skipInactive) => skipInactive,
-        (users, userIds, channelId, skipInactive = false) => {
+        (state, channelId, filters) => filters,
+        (users, userIds, channelId, filters = {}) => {
             const userIdsInChannel = userIds[channelId];
 
             if (!userIdsInChannel) {
                 return [];
+            } else if (filters) {
+                return sortAndInjectProfiles(filterProfiles(users, filters), userIdsInChannel);
             }
 
-            return sortAndInjectProfiles(users, userIdsInChannel, skipInactive);
+            return sortAndInjectProfiles(users, userIdsInChannel);
         },
     );
 }
@@ -539,4 +591,23 @@ export function makeGetDisplayName(): (state: GlobalState, userId: $ID<UserProfi
             return displayUsername(user, teammateNameDisplaySetting!, useFallbackUsername);
         },
     );
+}
+
+export const getProfilesInGroup: (state: GlobalState, groupId: $ID<Group>, filters?: Filters) => Array<UserProfile> = createSelector(
+    getUsers,
+    getUserIdsInGroups,
+    (state: GlobalState, groupId: string) => groupId,
+    (state: GlobalState, groupId: string, filters: Filters) => filters,
+    (profiles, usersInGroups, groupId, filters) => {
+        return sortAndInjectProfiles(filterProfiles(profiles, filters), usersInGroups[groupId] || new Set());
+    },
+);
+
+export function searchProfilesInGroup(state: GlobalState, groupId: $ID<Group>, term: string, skipCurrent = false, filters?: Filters): Array<UserProfile> {
+    const profiles = filterProfilesMatchingTerm(getProfilesInGroup(state, groupId, filters), term);
+    if (skipCurrent) {
+        removeCurrentUserFromList(profiles, getCurrentUserId(state));
+    }
+
+    return profiles;
 }

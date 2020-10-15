@@ -2,37 +2,32 @@
 // See LICENSE.txt for license information.
 
 import {Client4, DEFAULT_LIMIT_AFTER, DEFAULT_LIMIT_BEFORE} from 'client';
-import {General, Preferences, Posts, WebsocketEvents} from '../constants';
+import {General, Preferences, Posts} from '../constants';
 import {PostTypes, ChannelTypes, FileTypes, IntegrationTypes} from 'action_types';
 
-import {getCurrentChannelId, getMyChannelMember as getMyChannelMemberSelector, isManuallyUnread} from 'selectors/entities/channels';
+import {getMyChannelMember as getMyChannelMemberSelector} from 'selectors/entities/channels';
 import {getCustomEmojisByName as selectCustomEmojisByName} from 'selectors/entities/emojis';
 import {getConfig} from 'selectors/entities/general';
 import * as Selectors from 'selectors/entities/posts';
 import {getCurrentUserId, getUsersByUsername} from 'selectors/entities/users';
 
-import {getUserIdFromChannelName} from 'utils/channel_utils';
 import {parseNeededCustomEmojisFromText} from 'utils/emoji_utils';
-import {isFromWebhook, isSystemMessage, shouldIgnorePost} from 'utils/post_utils';
 import {isCombinedUserActivityPost} from 'utils/post_list';
 
-import {getMyChannelMember, markChannelAsUnread, markChannelAsRead, markChannelAsViewed} from './channels';
 import {systemEmojis, getCustomEmojiByName, getCustomEmojisByName} from './emojis';
 import {logError} from './errors';
 import {bindClientFunc, forceLogoutIfNecessary} from './helpers';
 
 import {
     deletePreferences,
-    makeDirectChannelVisibleIfNecessary,
-    makeGroupMessageVisibleIfNecessary,
     savePreferences,
 } from './preferences';
 import {getProfilesByIds, getProfilesByUsernames, getStatusesByIds} from './users';
-import {Action, ActionFunc, ActionResult, batchActions, DispatchFunc, GetStateFunc, GenericAction} from 'types/actions';
+import {Action, ActionResult, batchActions, DispatchFunc, GetStateFunc} from 'types/actions';
 import {ChannelUnread} from 'types/channels';
 import {GlobalState} from 'types/store';
-import {Post} from 'types/posts';
-import {Error} from 'types/errors';
+import {Post, PostList} from 'types/posts';
+import {ServerError} from 'types/errors';
 import {Reaction} from 'types/reactions';
 import {UserProfile} from 'types/users';
 import {Dictionary} from 'types/utilities';
@@ -58,7 +53,7 @@ export function receivedNewPost(post: Post) {
 
 // receivedPosts should be dispatched when receiving multiple posts from the server that may or may not be ordered.
 // This will typically be used alongside other actions like receivedPostsAfter which require the posts to be ordered.
-export function receivedPosts(posts: CombinedPostList) {
+export function receivedPosts(posts: PostList) {
     return {
         type: PostTypes.RECEIVED_POSTS,
         data: posts,
@@ -66,7 +61,7 @@ export function receivedPosts(posts: CombinedPostList) {
 }
 
 // receivedPostsAfter should be dispatched when receiving an ordered list of posts that come before a given post.
-export function receivedPostsAfter(posts: Array<Post>, channelId: string, afterPostId: string, recent = false) {
+export function receivedPostsAfter(posts: PostList, channelId: string, afterPostId: string, recent = false) {
     return {
         type: PostTypes.RECEIVED_POSTS_AFTER,
         channelId,
@@ -77,7 +72,7 @@ export function receivedPostsAfter(posts: Array<Post>, channelId: string, afterP
 }
 
 // receivedPostsBefore should be dispatched when receiving an ordered list of posts that come after a given post.
-export function receivedPostsBefore(posts: Array<Post>, channelId: string, beforePostId: string, oldest = false) {
+export function receivedPostsBefore(posts: PostList, channelId: string, beforePostId: string, oldest = false) {
     return {
         type: PostTypes.RECEIVED_POSTS_BEFORE,
         channelId,
@@ -90,7 +85,7 @@ export function receivedPostsBefore(posts: Array<Post>, channelId: string, befor
 // receivedPostsSince should be dispatched when receiving a list of posts that have been updated since a certain time.
 // Due to how the API endpoint works, some of these posts will be ordered, but others will not, so this needs special
 // handling from the reducers.
-export function receivedPostsSince(posts: Array<Post>, channelId: string) {
+export function receivedPostsSince(posts: PostList, channelId: string) {
     return {
         type: PostTypes.RECEIVED_POSTS_SINCE,
         channelId,
@@ -100,7 +95,7 @@ export function receivedPostsSince(posts: Array<Post>, channelId: string) {
 
 // receivedPostsInChannel should be dispatched when receiving a list of ordered posts within a channel when the
 // the adjacent posts are not known.
-export function receivedPostsInChannel(posts: CombinedPostList, channelId: string, recent = false, oldest = false) {
+export function receivedPostsInChannel(posts: PostList, channelId: string, recent = false, oldest = false) {
     return {
         type: PostTypes.RECEIVED_POSTS_IN_CHANNEL,
         channelId,
@@ -111,7 +106,7 @@ export function receivedPostsInChannel(posts: CombinedPostList, channelId: strin
 }
 
 // receivedPostsInThread should be dispatched when receiving a list of unordered posts in a thread.
-export function receivedPostsInThread(posts: Array<Post>, rootId: string) {
+export function receivedPostsInThread(posts: PostList, rootId: string) {
     return {
         type: PostTypes.RECEIVED_POSTS_IN_THREAD,
         data: posts,
@@ -181,7 +176,12 @@ export function createPost(post: Post, files: any[] = []) {
             pending_post_id: pendingPostId,
             create_at: timestamp,
             update_at: timestamp,
+            reply_count: 0,
         };
+
+        if (post.root_id) {
+            newPost.reply_count = Selectors.getPostRepliesCount(state, post.root_id) + 1;
+        }
 
         // We are retrying a pending post that had files
         if (newPost.file_ids && !files.length) {
@@ -246,7 +246,7 @@ export function createPost(post: Post, files: any[] = []) {
                     },
                     maxRetry: 0,
                     offlineRollback: true,
-                    rollback: (result: any, error: Error) => {
+                    rollback: (result: any, error: ServerError) => {
                         const data = {
                             ...newPost,
                             id: pendingPostId,
@@ -278,7 +278,6 @@ export function createPostImmediately(post: Post, files: any[] = []) {
     return async (dispatch: DispatchFunc, getState: GetStateFunc) => {
         const state = getState();
         const currentUserId = state.entities.users.currentUserId;
-
         const timestamp = Date.now();
         const pendingPostId = `${currentUserId}:${timestamp}`;
 
@@ -287,7 +286,12 @@ export function createPostImmediately(post: Post, files: any[] = []) {
             pending_post_id: pendingPostId,
             create_at: timestamp,
             update_at: timestamp,
+            reply_count: 0,
         };
+
+        if (post.root_id) {
+            newPost.reply_count = Selectors.getPostRepliesCount(state, post.root_id) + 1;
+        }
 
         if (files.length) {
             const fileIds = files.map((file) => file.id);
@@ -312,10 +316,11 @@ export function createPostImmediately(post: Post, files: any[] = []) {
         try {
             const created = await Client4.createPost({...newPost, create_at: 0});
             newPost.id = created.id;
+            newPost.reply_count = created.reply_count;
         } catch (error) {
             forceLogoutIfNecessary(error, dispatch, getState);
             dispatch(batchActions([
-                {type: PostTypes.CREATE_POST_FAILURE, error},
+                {type: PostTypes.CREATE_POST_FAILURE, data: newPost, error},
                 removePost({id: pendingPostId, ...newPost}) as any,
                 logError(error),
             ]));
@@ -402,7 +407,7 @@ export function editPost(post: Post) {
     });
 }
 
-export function getUnreadPostData(unreadChan: ChannelUnread, state: GlobalState) {
+function getUnreadPostData(unreadChan: ChannelUnread, state: GlobalState) {
     const member = getMyChannelMemberSelector(state, unreadChan.channel_id);
     const delta = member ? member.msg_count - unreadChan.msg_count : unreadChan.msg_count;
 
@@ -818,12 +823,6 @@ export function getPostsAfter(channelId: string, postId: string, page = 0, perPa
         return {data: posts};
     };
 }
-export type CombinedPostList = {
-    posts: Array<Post>;
-    order: Array<string>;
-    next_post_id: string;
-    prev_post_id: string;
-}
 
 export function getPostsAround(channelId: string, postId: string, perPage = Posts.POST_CHUNK_SIZE / 2, fetchThreads = true) {
     return async (dispatch: DispatchFunc, getState: GetStateFunc) => {
@@ -844,7 +843,7 @@ export function getPostsAround(channelId: string, postId: string, perPage = Post
         }
 
         // Dispatch a combined post list so that the order is correct for postsInChannel
-        const posts: CombinedPostList = {
+        const posts: PostList = {
             posts: {
                 ...after.posts,
                 ...thread.posts,
@@ -1095,7 +1094,7 @@ export function removePost(post: ExtendedPost) {
 }
 
 export function selectPost(postId: string) {
-    return async (dispatch: DispatchFunc, getState: GetStateFunc) => {
+    return async (dispatch: DispatchFunc) => {
         dispatch({
             type: PostTypes.RECEIVED_POST_SELECTED,
             data: postId,
@@ -1177,7 +1176,7 @@ export function doPostActionWithCookie(postId: string, actionId: string, actionC
 }
 
 export function addMessageIntoHistory(message: string) {
-    return async (dispatch: DispatchFunc, getState: GetStateFunc) => {
+    return async (dispatch: DispatchFunc) => {
         dispatch({
             type: PostTypes.ADD_MESSAGE_INTO_HISTORY,
             data: message,
@@ -1188,7 +1187,7 @@ export function addMessageIntoHistory(message: string) {
 }
 
 export function resetHistoryIndex(index: number) {
-    return async (dispatch: DispatchFunc, getState: GetStateFunc) => {
+    return async (dispatch: DispatchFunc) => {
         dispatch({
             type: PostTypes.RESET_HISTORY_INDEX,
             data: index,
@@ -1199,7 +1198,7 @@ export function resetHistoryIndex(index: number) {
 }
 
 export function moveHistoryIndexBack(index: number) {
-    return async (dispatch: DispatchFunc, getState: GetStateFunc) => {
+    return async (dispatch: DispatchFunc) => {
         dispatch({
             type: PostTypes.MOVE_HISTORY_INDEX_BACK,
             data: index,
@@ -1210,96 +1209,12 @@ export function moveHistoryIndexBack(index: number) {
 }
 
 export function moveHistoryIndexForward(index: number) {
-    return async (dispatch: DispatchFunc, getState: GetStateFunc) => {
+    return async (dispatch: DispatchFunc) => {
         dispatch({
             type: PostTypes.MOVE_HISTORY_INDEX_FORWARD,
             data: index,
         });
 
         return {data: true};
-    };
-}
-
-export function handleNewPost(msg: Omit<GenericAction, 'type'>) {
-    return async (dispatch: DispatchFunc, getState: GetStateFunc) => {
-        const state = getState();
-        const currentUserId = getCurrentUserId(state);
-        const post = JSON.parse(msg.data.post);
-        const myChannelMember = getMyChannelMemberSelector(state, post.channel_id);
-        const websocketMessageProps = msg.data;
-
-        if (myChannelMember && Object.keys(myChannelMember).length === 0 && (myChannelMember as any).constructor === 'Object') {
-            await dispatch(getMyChannelMember(post.channel_id));
-        }
-
-        dispatch(completePostReceive(post, websocketMessageProps) as any);
-
-        if (msg.data.channel_type === General.DM_CHANNEL) {
-            const otherUserId = getUserIdFromChannelName(currentUserId, msg.data.channel_name);
-            dispatch(makeDirectChannelVisibleIfNecessary(otherUserId));
-        } else if (msg.data.channel_type === General.GM_CHANNEL) {
-            dispatch(makeGroupMessageVisibleIfNecessary(post.channel_id));
-        }
-
-        return {data: true};
-    };
-}
-
-function completePostReceive(post: Post, websocketMessageProps: any) {
-    return (dispatch: DispatchFunc, getState: GetStateFunc) => {
-        const state = getState();
-        const rootPost = Selectors.getPost(state, post.root_id);
-
-        if (post.root_id && !rootPost) {
-            dispatch(getPostThread(post.root_id, true));
-        }
-
-        dispatch(lastPostActions(post, websocketMessageProps) as any);
-    };
-}
-
-export function lastPostActions(post: Post, websocketMessageProps: any) {
-    return async (dispatch: DispatchFunc, getState: GetStateFunc) => {
-        const state = getState();
-        const actions = [
-            receivedNewPost(post),
-            {
-                type: WebsocketEvents.STOP_TYPING,
-                data: {
-                    id: post.channel_id + post.root_id,
-                    userId: post.user_id,
-                    now: Date.now(),
-                },
-            },
-        ];
-
-        await dispatch(batchActions(actions));
-
-        if (shouldIgnorePost(post)) {
-            return;
-        }
-
-        let markAsRead = false;
-        let markAsReadOnServer = false;
-        if (!isManuallyUnread(getState(), post.channel_id)) {
-            if (
-                post.user_id === getCurrentUserId(state) &&
-                !isSystemMessage(post) &&
-                !isFromWebhook(post)
-            ) {
-                markAsRead = true;
-                markAsReadOnServer = false;
-            } else if (post.channel_id === getCurrentChannelId(state)) {
-                markAsRead = true;
-                markAsReadOnServer = true;
-            }
-        }
-
-        if (markAsRead) {
-            await dispatch(markChannelAsRead(post.channel_id, undefined, markAsReadOnServer));
-            await dispatch(markChannelAsViewed(post.channel_id));
-        } else {
-            await dispatch(markChannelAsUnread(websocketMessageProps.team_id, post.channel_id, websocketMessageProps.mentions));
-        }
     };
 }

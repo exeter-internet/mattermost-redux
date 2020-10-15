@@ -4,9 +4,9 @@
 import {combineReducers} from 'redux';
 import {GeneralTypes, UserTypes} from 'action_types';
 import {GenericAction} from 'types/actions';
-import {Config} from 'types/config';
+import {ClientLicense, ClientConfig} from 'types/config';
 
-function config(state: Partial<Config> = {}, action: GenericAction) {
+function config(state: Partial<ClientConfig> = {}, action: GenericAction) {
     switch (action.type) {
     case GeneralTypes.CLIENT_CONFIG_RECEIVED:
         return Object.assign({}, state, action.data);
@@ -67,7 +67,7 @@ function deviceToken(state = '', action: GenericAction) {
     }
 }
 
-function license(state: any = {}, action: GenericAction) {
+function license(state: ClientLicense = {}, action: GenericAction) {
     switch (action.type) {
     case GeneralTypes.CLIENT_LICENSE_RECEIVED:
         return action.data;
@@ -103,6 +103,27 @@ function serverVersion(state = '', action: GenericAction) {
     }
 }
 
+function warnMetricsStatus(state: any = {}, action: GenericAction) {
+    switch (action.type) {
+    case GeneralTypes.WARN_METRICS_STATUS_RECEIVED:
+        return action.data;
+    case GeneralTypes.WARN_METRIC_STATUS_RECEIVED: {
+        const nextState = {...state};
+        nextState[action.data.id] = action.data;
+        return nextState;
+    }
+    case GeneralTypes.WARN_METRIC_STATUS_REMOVED: {
+        const nextState = {...state};
+        const newParams = Object.assign({}, nextState[action.data.id]);
+        newParams.acked = true;
+        nextState[action.data.id] = newParams;
+        return nextState;
+    }
+    default:
+        return state;
+    }
+}
+
 export default combineReducers({
     appState,
     credentials,
@@ -112,4 +133,5 @@ export default combineReducers({
     license,
     serverVersion,
     timezones,
+    warnMetricsStatus,
 });

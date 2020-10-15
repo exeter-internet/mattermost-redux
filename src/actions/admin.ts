@@ -319,6 +319,26 @@ export function uploadPrivateSamlCertificate(fileData: File): ActionFunc {
     });
 }
 
+export function uploadPublicLdapCertificate(fileData: File): ActionFunc {
+    return bindClientFunc({
+        clientFunc: Client4.uploadPublicLdapCertificate,
+        onSuccess: AdminTypes.UPLOAD_LDAP_PUBLIC_SUCCESS,
+        params: [
+            fileData,
+        ],
+    });
+}
+
+export function uploadPrivateLdapCertificate(fileData: File): ActionFunc {
+    return bindClientFunc({
+        clientFunc: Client4.uploadPrivateLdapCertificate,
+        onSuccess: AdminTypes.UPLOAD_LDAP_PRIVATE_SUCCESS,
+        params: [
+            fileData,
+        ],
+    });
+}
+
 export function uploadIdpSamlCertificate(fileData: File): ActionFunc {
     return bindClientFunc({
         clientFunc: Client4.uploadIdpSamlCertificate,
@@ -346,6 +366,20 @@ export function removePrivateSamlCertificate(): ActionFunc {
         onRequest: AdminTypes.DELETE_SAML_PRIVATE_REQUEST,
         onSuccess: AdminTypes.DELETE_SAML_PRIVATE_SUCCESS,
         onFailure: AdminTypes.DELETE_SAML_PRIVATE_FAILURE,
+    });
+}
+
+export function removePublicLdapCertificate(): ActionFunc {
+    return bindClientFunc({
+        clientFunc: Client4.deletePublicLdapCertificate,
+        onSuccess: AdminTypes.DELETE_LDAP_PUBLIC_SUCCESS,
+    });
+}
+
+export function removePrivateLdapCertificate(): ActionFunc {
+    return bindClientFunc({
+        clientFunc: Client4.deletePrivateLdapCertificate,
+        onSuccess: AdminTypes.DELETE_LDAP_PRIVATE_SUCCESS,
     });
 }
 
@@ -603,4 +637,17 @@ export function setSamlIdpCertificateFromMetadata(certData: string): ActionFunc 
             certData,
         ],
     });
+}
+
+export function sendWarnMetricAck(warnMetricId: string, forceAck: boolean) {
+    return async (dispatch: DispatchFunc) => {
+        try {
+            Client4.trackEvent('api', 'api_request_send_metric_ack', {warnMetricId});
+            await Client4.sendWarnMetricAck(warnMetricId, forceAck);
+            return {data: true};
+        } catch (e) {
+            dispatch(logError(e));
+            return {error: e.message};
+        }
+    };
 }

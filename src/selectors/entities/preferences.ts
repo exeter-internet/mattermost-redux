@@ -8,7 +8,7 @@ import {General, Preferences} from '../../constants';
 import {getConfig, getLicense} from 'selectors/entities/general';
 import {getCurrentTeamId} from 'selectors/entities/teams';
 
-import {PreferencesType, PreferenceType} from 'types/preferences';
+import {PreferenceType} from 'types/preferences';
 import {UserProfile} from 'types/users';
 import {GlobalState} from 'types/store';
 import {$ID} from 'types/utilities';
@@ -259,6 +259,8 @@ export const getNewSidebarPreference: (state: GlobalState) => boolean = createSe
         switch (globalSetting) {
         case General.DISABLED:
             return false;
+        case General.ALWAYS_ON:
+            return true;
         case General.DEFAULT_ON:
             return userSetting ? (userSetting === 'true') : true;
         case General.DEFAULT_OFF:
