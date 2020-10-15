@@ -12,6 +12,7 @@ import {getMyTeams, getMyTeamMembers, getMyTeamUnreads} from './teams';
 import {loadRolesIfNeeded} from './roles';
 import {getUserIdFromChannelName, isDirectChannel, isDirectChannelVisible, isGroupChannel, isGroupChannelVisible} from 'utils/channel_utils';
 import {removeUserFromList} from 'utils/user_utils';
+import {removeRoleFromList} from 'utils/user_utils';
 import {isMinimumServerVersion} from 'utils/helpers';
 
 import {getConfig, getServerVersion} from 'selectors/entities/general';
@@ -268,11 +269,15 @@ export function getTotalUsersStats(): ActionFunc {
 export function getProfiles(page = 0, perPage: number = General.PROFILE_CHUNK_SIZE, options: any = {}): ActionFunc {
     return async (dispatch: DispatchFunc, getState: GetStateFunc) => {
         const {currentUserId} = getState().entities.users;
+        const {roles} = getState().entities.roles;
         let profiles: UserProfile[];
 
         try {
             profiles = await Client4.getProfiles(page, perPage, options);
             removeUserFromList(currentUserId, profiles);
+            if(roles["team_student"]) {
+                removeRoleFromList("team_student", profiles);
+            }
         } catch (error) {
             forceLogoutIfNecessary(error, dispatch, getState);
             dispatch(logError(error));
@@ -333,11 +338,15 @@ export function getMissingProfilesByUsernames(usernames: Array<string>): ActionF
 export function getProfilesByIds(userIds: Array<string>, options?: any): ActionFunc {
     return async (dispatch: DispatchFunc, getState: GetStateFunc) => {
         const {currentUserId} = getState().entities.users;
+        const {roles} = getState().entities.roles;
         let profiles: UserProfile[];
 
         try {
             profiles = await Client4.getProfilesByIds(userIds, options);
             removeUserFromList(currentUserId, profiles);
+            if(roles["team_student"]) {
+                removeRoleFromList("team_student", profiles);
+            }
         } catch (error) {
             forceLogoutIfNecessary(error, dispatch, getState);
             dispatch(logError(error));
@@ -356,11 +365,15 @@ export function getProfilesByIds(userIds: Array<string>, options?: any): ActionF
 export function getProfilesByUsernames(usernames: Array<string>): ActionFunc {
     return async (dispatch: DispatchFunc, getState: GetStateFunc) => {
         const {currentUserId} = getState().entities.users;
+        const {roles} = getState().entities.roles;
         let profiles;
 
         try {
             profiles = await Client4.getProfilesByUsernames(usernames);
             removeUserFromList(currentUserId, profiles);
+            if(roles["team_student"]) {
+                removeRoleFromList("team_student", profiles);
+            }
         } catch (error) {
             forceLogoutIfNecessary(error, dispatch, getState);
             dispatch(logError(error));
@@ -379,10 +392,14 @@ export function getProfilesByUsernames(usernames: Array<string>): ActionFunc {
 export function getProfilesInTeam(teamId: string, page: number, perPage: number = General.PROFILE_CHUNK_SIZE, sort = '', options: any = {}): ActionFunc {
     return async (dispatch: DispatchFunc, getState: GetStateFunc) => {
         const {currentUserId} = getState().entities.users;
+        const {roles} = getState().entities.roles;
         let profiles;
 
         try {
             profiles = await Client4.getProfilesInTeam(teamId, page, perPage, sort, options);
+            if(roles["team_student"]) {
+                removeRoleFromList("team_student", profiles);
+            }
         } catch (error) {
             forceLogoutIfNecessary(error, dispatch, getState);
             dispatch(logError(error));
@@ -407,9 +424,13 @@ export function getProfilesInTeam(teamId: string, page: number, perPage: number 
 
 export function getProfilesNotInTeam(teamId: string, groupConstrained: boolean, page: number, perPage: number = General.PROFILE_CHUNK_SIZE): ActionFunc {
     return async (dispatch: DispatchFunc, getState: GetStateFunc) => {
+        const {roles} = getState().entities.roles;
         let profiles;
         try {
             profiles = await Client4.getProfilesNotInTeam(teamId, groupConstrained, page, perPage);
+            if(roles["team_student"]) {
+                removeRoleFromList("team_student", profiles);
+            }
         } catch (error) {
             forceLogoutIfNecessary(error, dispatch, getState);
             dispatch(logError(error));
@@ -438,9 +459,13 @@ export function getProfilesNotInTeam(teamId: string, groupConstrained: boolean, 
 
 export function getProfilesWithoutTeam(page: number, perPage: number = General.PROFILE_CHUNK_SIZE, options: any = {}): ActionFunc {
     return async (dispatch: DispatchFunc, getState: GetStateFunc) => {
+        const {roles} = getState().entities.roles;
         let profiles = null;
         try {
             profiles = await Client4.getProfilesWithoutTeam(page, perPage, options);
+            if(roles["team_student"]) {
+                removeRoleFromList("team_student", profiles);
+            }
         } catch (error) {
             forceLogoutIfNecessary(error, dispatch, getState);
             dispatch(logError(error));
@@ -465,10 +490,14 @@ export function getProfilesWithoutTeam(page: number, perPage: number = General.P
 export function getProfilesInChannel(channelId: string, page: number, perPage: number = General.PROFILE_CHUNK_SIZE, sort = ''): ActionFunc {
     return async (dispatch: DispatchFunc, getState: GetStateFunc) => {
         const {currentUserId} = getState().entities.users;
+        const {roles} = getState().entities.roles;
         let profiles;
 
         try {
             profiles = await Client4.getProfilesInChannel(channelId, page, perPage, sort);
+            if(roles["team_student"]) {
+                removeRoleFromList("team_student", profiles);
+            }
         } catch (error) {
             forceLogoutIfNecessary(error, dispatch, getState);
             dispatch(logError(error));
@@ -532,10 +561,14 @@ export function getProfilesInGroupChannels(channelsIds: Array<string>): ActionFu
 export function getProfilesNotInChannel(teamId: string, channelId: string, groupConstrained: boolean, page: number, perPage: number = General.PROFILE_CHUNK_SIZE): ActionFunc {
     return async (dispatch: DispatchFunc, getState: GetStateFunc) => {
         const {currentUserId} = getState().entities.users;
+        const {roles} = getState().entities.roles;
         let profiles;
 
         try {
             profiles = await Client4.getProfilesNotInChannel(teamId, channelId, groupConstrained, page, perPage);
+            if(roles["team_student"]) {
+                removeRoleFromList("team_student", profiles);
+            }
         } catch (error) {
             forceLogoutIfNecessary(error, dispatch, getState);
             dispatch(logError(error));

@@ -95,6 +95,16 @@ export function removeUserFromList(userId: $ID<UserProfile>, list: Array<UserPro
     return list;
 }
 
+export function removeRoleFromList(role: string, list: Array<UserProfile>): Array<UserProfile> {
+    for (let i = list.length - 1; i >= 0; i--) {
+        if (list[i].roles.includes(role)) {
+            list.splice(i, 1);
+        }
+    }
+
+    return list;
+}
+
 // Splits the term by a splitStr and composes a list of the parts of
 // the split concatenated with the rest, forming a set of suggesitons
 // matchable with startsWith
